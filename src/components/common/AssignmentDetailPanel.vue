@@ -54,11 +54,14 @@ const attachmentError = ref('')
 const previewingId = ref('')
 const videoPreview = ref(null)
 const downloadingId = ref('')
+const dragDepth = ref(0)
+const dragActive = computed(() => dragDepth.value > 0)
 
 watch(
   () => props.assignment?.id,
   () => {
     assignmentContent.value = ''
+    dragDepth.value = 0
     clearPickedFiles()
   },
 )
@@ -355,8 +358,57 @@ function formatFileSize(size) {
   return `${(size / 1024 / 1024).toFixed(1)}MB`
 }
 
+function fileKey(file) {
+  return `${file.name}-${file.size}-${file.lastModified}`
+}
+
+function addPickedFiles(files) {
+  const known = new Set(pickedFiles.value.map(fileKey))
+  const added = []
+  for (const file of files || []) {
+    const key = fileKey(file)
+    if (known.has(key)) continue
+    known.add(key)
+    added.push(file)
+  }
+  if (added.length > 0) {
+    pickedFiles.value = [...pickedFiles.value, ...added]
+  }
+}
+
 function updatePickedFiles(event) {
-  pickedFiles.value = Array.from(event.target.files || [])
+  addPickedFiles(event.target.files)
+  event.target.value = ''
+}
+
+function removePickedFile(file) {
+  pickedFiles.value = pickedFiles.value.filter((item) => item !== file)
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files')
+}
+
+function onDragEnter(event) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value += 1
+}
+
+function onDragOver(event) {
+  if (!hasDraggedFiles(event)) return
+  event.dataTransfer.dropEffect = props.submitting ? 'none' : 'copy'
+}
+
+function onDragLeave(event) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+}
+
+function onDrop(event) {
+  dragDepth.value = 0
+  if (!props.submitting) {
+    addPickedFiles(event.dataTransfer?.files)
+  }
 }
 
 function clearPickedFiles() {
@@ -460,11 +512,19 @@ function submitAssignment() {
         </div>
       </div>
 
-      <form class="assignment-submit-box" @submit.prevent="submitAssignment">
+      <form
+        class="assignment-submit-box"
+        :class="{ 'drag-active': dragActive }"
+        @submit.prevent="submitAssignment"
+        @dragenter.prevent="onDragEnter"
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+      >
         <div class="subsection-header">
           <div>
             <strong>提交作业</strong>
-            <span>填写内容或添加附件后提交</span>
+            <span>填写内容或添加附件后提交，可直接把文件拖到这里</span>
           </div>
         </div>
 
@@ -496,12 +556,32 @@ function submitAssignment() {
         </div>
 
         <div v-if="pickedFiles.length > 0" class="picked-file-list">
-          <div v-for="file in pickedFiles" :key="`${file.name}-${file.lastModified}`" class="picked-file-row">
+          <div v-for="file in pickedFiles" :key="fileKey(file)" class="picked-file-row">
             <strong>{{ file.name }}</strong>
             <span>{{ formatFileSize(file.size) }}</span>
+            <button
+              :disabled="submitting"
+              class="picked-file-remove"
+              title="移除"
+              type="button"
+              @click="removePickedFile(file)"
+            >×</button>
           </div>
         </div>
-        <div v-else class="empty-state">未选择文件</div>
+        <button
+          v-else
+          :disabled="submitting"
+          class="file-drop-zone"
+          type="button"
+          @click="fileInput?.click()"
+        >
+          <strong>拖拽文件到此处</strong>
+          <span>或点击选择文件，支持多个</span>
+        </button>
+
+        <div v-if="dragActive" class="drop-overlay" aria-hidden="true">
+          <strong>松开即可添加附件</strong>
+        </div>
 
         <section v-if="submitError" class="notice error">
           {{ submitError }}

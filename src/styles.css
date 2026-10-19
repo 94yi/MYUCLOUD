@@ -1073,12 +1073,61 @@ pre.assignment-content-box {
 }
 
 .assignment-submit-box {
+  position: relative;
   display: grid;
   gap: 14px;
   border: 1px solid #e1e6eb;
   border-radius: 8px;
   background: var(--paper-subtle);
   padding: 15px;
+}
+
+.assignment-submit-box.drag-active {
+  border-color: var(--cloud-blue);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--cloud-blue);
+  border-radius: 8px;
+  background: rgba(238, 244, 247, 0.92);
+  color: var(--cloud-blue-strong);
+  font-size: 15px;
+  pointer-events: none;
+}
+
+.file-drop-zone {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-height: 88px;
+  align-content: center;
+  border: 1px dashed #c9d3dc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 400;
+  padding: 14px;
+  text-align: center;
+}
+
+.file-drop-zone:hover:not(:disabled) {
+  border-color: var(--cloud-blue);
+  background: var(--cloud-blue-soft);
+}
+
+.file-drop-zone strong {
+  color: #4b5869;
+  font-size: 14px;
+}
+
+.file-drop-zone span {
+  font-size: 12px;
 }
 
 .subsection-header {
@@ -1151,7 +1200,7 @@ pre.assignment-content-box {
 
 .picked-file-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
   gap: 12px;
   align-items: center;
   padding: 9px 0;
@@ -1171,6 +1220,21 @@ pre.assignment-content-box {
   color: var(--muted);
   font-size: 13px;
   white-space: nowrap;
+}
+
+.picked-file-remove {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.picked-file-remove:hover:not(:disabled) {
+  color: var(--deadline-red);
+  background: transparent;
 }
 
 .attachment-list {
