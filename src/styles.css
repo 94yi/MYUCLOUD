@@ -181,6 +181,10 @@ p {
   color: #334155;
 }
 
+.view-tabs button.feedback-tab {
+  color: var(--muted);
+}
+
 .view-tabs button.active {
   background: #f3f7f9;
   color: var(--cloud-blue-strong);

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { STATIC_PREVIEW } from './utils/runtime.js'
+import { BACKEND_ORIGIN, STATIC_PREVIEW } from './utils/runtime.js'
 import { responseErrorMessage } from './api/http.js'
 import {
   BUSINESS_AUTH,
@@ -33,6 +33,9 @@ import DeadlineList from './components/common/DeadlineList.vue'
 import AppShell from './components/layout/AppShell.vue'
 import { usePlugins } from './plugin/index.js'
 import { isSubmitViewSubmitted, normalizeAssignment, sortAssignments } from './utils/deadline'
+import FeedbackDialog from './components/common/FeedbackDialog.vue'
+import { buildFeedbackReport, collectKnownSecrets } from './utils/feedback-report.js'
+import { jwglSessionId } from './api/jwgl.js'
 
 const ASSIGNMENT_FETCH_SIZE = 9999
 const debugEnabled = import.meta.env.MODE !== 'pages' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
@@ -207,6 +210,35 @@ function logError(label, error) {
     name: error?.name,
     message: error?.message,
     stack: error?.stack,
+  })
+}
+
+const feedbackOpen = ref(false)
+
+// 反馈对话框打开时按当前页面状态生成诊断报告，脱敏规则见 utils/feedback-report.js
+function buildCurrentFeedbackReport() {
+  return buildFeedbackReport({
+    app: {
+      commit: typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : '',
+      mode: import.meta.env.MODE,
+      backend: BACKEND_ORIGIN ? new URL(BACKEND_ORIGIN).host : 'same-origin',
+    },
+    view: activeView.value,
+    environment: {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      viewport: { width: Math.round(window.innerWidth / 10) * 10, height: Math.round(window.innerHeight / 10) * 10 },
+    },
+    session: { ucloud: Boolean(userInfo.value), jwgl: Boolean(jwglSessionId.value) },
+    courses: courses.value,
+    assignments: assignments.value,
+    selected: activeView.value === 'assignment' ? selectedAssignment.value : null,
+    detail: activeView.value === 'assignment' ? assignmentDetail.value : null,
+    submitView: activeView.value === 'assignment' ? assignmentSubmitView.value : null,
+    submitResult: activeView.value === 'assignment' ? assignmentSubmitResult.value : null,
+    logs: logs.value,
+    known: collectKnownSecrets({ userInfo: userInfo.value, username: username.value, token: bladeToken.value }),
   })
 }
 
@@ -1263,6 +1295,7 @@ onUnmounted(() => {
     :debug-enabled="debugEnabled"
     :plugins="plugins"
     @change-view="setView"
+    @feedback="feedbackOpen = true"
   >
     <template v-if="activeView === 'study'">
       <AuthBar
@@ -1448,5 +1481,11 @@ onUnmounted(() => {
     />
 
     <section v-else class="notice error">页面不存在</section>
+    <FeedbackDialog
+      v-if="feedbackOpen"
+      :build-report="buildCurrentFeedbackReport"
+      :initial-category="activeView === 'assignment' ? 'submit' : 'display'"
+      @close="feedbackOpen = false"
+    />
   </AppShell>
 </template>

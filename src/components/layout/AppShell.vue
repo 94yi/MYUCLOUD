@@ -17,7 +17,7 @@ defineProps({
   },
 })
 
-const emit = defineEmits(['change-view'])
+const emit = defineEmits(['change-view', 'feedback'])
 </script>
 
 <template>
@@ -58,6 +58,9 @@ const emit = defineEmits(['change-view'])
           @click="emit('change-view', 'debug')"
         >
           调试
+        </button>
+        <button v-if="!STATIC_PREVIEW" class="feedback-tab" type="button" @click="emit('feedback')">
+          反馈
         </button>
       </nav>
     </header>
