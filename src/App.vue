@@ -32,7 +32,7 @@ import CourseResourcePanel from './components/common/CourseResourcePanel.vue'
 import DeadlineList from './components/common/DeadlineList.vue'
 import AppShell from './components/layout/AppShell.vue'
 import { usePlugins } from './plugin/index.js'
-import { normalizeAssignment, sortAssignments } from './utils/deadline'
+import { isSubmitViewSubmitted, normalizeAssignment, sortAssignments } from './utils/deadline'
 
 const ASSIGNMENT_FETCH_SIZE = 9999
 const debugEnabled = import.meta.env.MODE !== 'pages' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
@@ -75,6 +75,10 @@ const assignmentDetailError = ref('')
 const assignmentSubmitError = ref('')
 const assignmentSubmitResult = ref(null)
 const submittingAssignment = ref(false)
+const uploadProgress = ref(null)
+// 已上传成功的附件按 作业+文件 记住 id，重试提交时不必重新上传大文件
+const uploadedAttachmentCache = new Map()
+let submitController = null
 const assignments = ref([])
 const includeCompleted = ref(false)
 const assignmentPageSize = ref(20)
@@ -83,8 +87,9 @@ let courseResourceRequestId = 0
 let courseAssignmentRequestId = 0
 let assignmentDetailRequestId = 0
 
+// 往期未交（level missed）只在打开“显示已提交与往期”时列出，不计入待完成
 const pendingAssignments = computed(() =>
-  assignments.value.filter((assignment) => !assignment.isCompleted),
+  assignments.value.filter((assignment) => !assignment.isCompleted && !assignment.isMissed),
 )
 const urgentAssignments = computed(() =>
   pendingAssignments.value.filter((assignment) => assignment.level === 'danger' || assignment.level === 'warning'),
@@ -94,7 +99,7 @@ const overdueAssignments = computed(() =>
 )
 const visibleAssignments = computed(() =>
   assignments.value
-    .filter((assignment) => includeCompleted.value || !assignment.isCompleted)
+    .filter((assignment) => includeCompleted.value || (!assignment.isCompleted && !assignment.isMissed))
     .slice(0, Number(assignmentPageSize.value) || 20),
 )
 const userLabel = computed(
@@ -229,7 +234,7 @@ function resetAssignmentDetail() {
   assignmentDetailError.value = ''
   assignmentSubmitError.value = ''
   assignmentSubmitResult.value = null
-  submittingAssignment.value = false
+  abortAssignmentSubmit()
   loadingAssignmentId.value = ''
 }
 
@@ -350,19 +355,6 @@ function pickSubmitTime(body) {
   )
 }
 
-function hasSubmitViewResult(body, assignmentId) {
-  const data = body?.data ?? body
-  if (!data || typeof data !== 'object') return false
-
-  if (String(data.assignmentId || '') === String(assignmentId)) return true
-
-  return Boolean(
-    data.assignmentContent ||
-      data.assignmentComment ||
-      (Array.isArray(data.attachmentIds) && data.attachmentIds.length > 0),
-  )
-}
-
 function patchSubmittedAssignment(assignment, submitTime) {
   if (!assignment) return assignment
 
@@ -373,10 +365,12 @@ function patchSubmittedAssignment(assignment, submitTime) {
     isCompleted: true,
     isUrgent: false,
     isOverdue: false,
+    isMissed: false,
     status: '已提交',
     raw: {
       ...(assignment.raw || {}),
-      status: 3,
+      // assignmentStatus 才是提交状态（99 未提交）；status 是作业是否截止，保持学校的值
+      assignmentStatus: 0,
       submitTime: assignment.raw?.submitTime || submitTime,
     },
   }
@@ -422,7 +416,7 @@ function markAssignmentSubmitted(assignmentId, submitTime) {
   if (assignmentDetail.value) {
     assignmentDetail.value = {
       ...assignmentDetail.value,
-      status: 3,
+      assignmentStatus: 0,
       submitTime: assignmentDetail.value.submitTime || submitTime,
     }
   }
@@ -434,7 +428,7 @@ function markAssignmentSubmitted(assignmentId, submitTime) {
   })
 }
 
-async function refreshAssignmentsAfterSubmit(assignmentId, submitTime) {
+async function refreshAssignmentsAfterSubmit(assignmentId) {
   try {
     const knownAssignments = buildKnownAssignmentMap()
     const assignmentCall = await getAssignments(bladeToken.value, {
@@ -449,9 +443,11 @@ async function refreshAssignmentsAfterSubmit(assignmentId, submitTime) {
     assignments.value = sortAssignments(
       (assignmentCall.result.body?.data?.records || []).map((record) => {
         const normalized = normalizeAssignmentWithKnownCourse(record, knownAssignments)
+        const confirmedLocally = assignmentSubmitResult.value?.confirmed && getAssignmentId(normalized) === assignmentId
 
-        return getAssignmentId(normalized) === assignmentId && !normalized.isCompleted
-          ? patchSubmittedAssignment(normalized, submitTime)
+        // 只有 submit-view 已确认提交时才补齐列表状态，学校未确认时以学校列表为准
+        return confirmedLocally && !normalized.isCompleted
+          ? patchSubmittedAssignment(normalized, assignmentSubmitResult.value.submitTime || formatBackendTime())
           : normalized
       }),
     )
@@ -787,7 +783,7 @@ async function loadAssignmentSubmitView(assignmentId, requestId) {
       return
     }
 
-    if (hasSubmitViewResult(submitViewCall.result.body, assignmentId)) {
+    if (isSubmitViewSubmitted(submitViewCall.result.body)) {
       const submitTime = pickSubmitTime(submitViewCall.result.body) || selectedAssignment.value?.submitTime || ''
       markAssignmentSubmitted(assignmentId, submitTime)
       await loadSubmitAttachmentResources(extractSubmitViewAttachmentIds(submitViewCall.result.body), requestId)
@@ -862,6 +858,7 @@ async function loadAssignmentResources(assignment) {
   assignmentDetailError.value = ''
   assignmentSubmitError.value = ''
   assignmentSubmitResult.value = null
+  abortAssignmentSubmit()
 
   if (!bladeToken.value) {
     assignmentDetailError.value = '需要先登录或粘贴 Blade-Auth'
@@ -1012,29 +1009,91 @@ function pickUploadAttachmentId(body) {
   return id ? String(id) : ''
 }
 
-async function uploadAssignmentFiles(files) {
+function abortAssignmentSubmit() {
+  submitController?.abort()
+  submitController = null
+  submittingAssignment.value = false
+  uploadProgress.value = null
+}
+
+function getAttachmentCacheKey(assignmentId, file) {
+  return [assignmentId, file.name, file.size, file.lastModified].join('|')
+}
+
+function isRetryableUploadError(error) {
+  return Boolean(error?.retryable) && error?.name !== 'AbortError'
+}
+
+async function uploadOneAttachment(file, signal, report) {
+  const maxAttempts = 2
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const uploadCall = await uploadBusinessResource(bladeToken.value, {
+        file,
+        userId: userInfo.value.id,
+        bizType: 3,
+        signal,
+        onProgress: (progress) => report({ ...progress, attempt }),
+      })
+
+      log('study:attachment-upload:start', { ...uploadCall.request, attempt })
+      log('study:attachment-upload:response', uploadCall.result)
+      checkAuth(uploadCall.result, '附件上传')
+
+      const attachmentId = pickUploadAttachmentId(uploadCall.result.body)
+      if (!attachmentId) {
+        throw new Error('附件上传响应里没有 data')
+      }
+      return attachmentId
+    } catch (error) {
+      logError('study:attachment-upload:error', { file: describeFile(file), attempt, message: error?.message })
+      if (attempt >= maxAttempts || !isRetryableUploadError(error) || signal.aborted) {
+        throw new Error(`附件「${file.name}」上传失败：${error?.message || '未知错误'}`, { cause: error })
+      }
+    }
+  }
+}
+
+async function uploadAssignmentFiles(assignmentId, files, signal) {
   const attachmentIds = []
 
-  for (const file of files) {
-    const uploadCall = await uploadBusinessResource(bladeToken.value, {
-      file,
-      userId: userInfo.value.id,
-      bizType: 3,
-    })
-
-    log('study:attachment-upload:start', uploadCall.request)
-    log('study:attachment-upload:response', uploadCall.result)
-    checkAuth(uploadCall.result, '附件上传')
-
-    const attachmentId = pickUploadAttachmentId(uploadCall.result.body)
-    if (!attachmentId) {
-      throw new Error('附件上传响应里没有 data')
+  for (const [index, file] of files.entries()) {
+    const cacheKey = getAttachmentCacheKey(assignmentId, file)
+    const cached = uploadedAttachmentCache.get(cacheKey)
+    if (cached) {
+      log('study:attachment-upload:reused', { file: describeFile(file), attachmentId: cached })
+      attachmentIds.push(cached)
+      continue
     }
 
+    const report = (progress) => {
+      uploadProgress.value = { index: index + 1, count: files.length, name: file.name, size: file.size, ...progress }
+    }
+    report({ loaded: 0, total: file.size, elapsedMs: 0, sent: false, attempt: 1 })
+    const attachmentId = await uploadOneAttachment(file, signal, report)
+    uploadedAttachmentCache.set(cacheKey, attachmentId)
     attachmentIds.push(attachmentId)
   }
 
+  uploadProgress.value = null
   return attachmentIds
+}
+
+async function confirmSubmission(assignmentId) {
+  // 学校提交接口返回成功不代表已记录，以 submit-view 查到的提交记录为准
+  for (const delayMs of [0, 1500, 4000]) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))
+    try {
+      const viewCall = await getAssignmentSubmitView(bladeToken.value, assignmentId)
+      log('study:assignment-submit-confirm:response', viewCall.result)
+      if (viewCall.result.ok && isSubmitViewSubmitted(viewCall.result.body)) {
+        return { confirmed: true, body: viewCall.result.body }
+      }
+    } catch (error) {
+      logError('study:assignment-submit-confirm:error', error)
+    }
+  }
+  return { confirmed: false, body: null }
 }
 
 async function submitSelectedAssignment({ assignment, content, files = [] }) {
@@ -1056,10 +1115,13 @@ async function submitSelectedAssignment({ assignment, content, files = [] }) {
     return
   }
 
+  abortAssignmentSubmit()
+  const controller = new AbortController()
+  submitController = controller
   submittingAssignment.value = true
 
   try {
-    const uploadedAttachmentIds = files.length > 0 ? await uploadAssignmentFiles(files) : []
+    const uploadedAttachmentIds = files.length > 0 ? await uploadAssignmentFiles(assignmentId, files, controller.signal) : []
     const localFiles = files.map(describeFile)
     const payload = {
       attachmentIds: uploadedAttachmentIds,
@@ -1085,21 +1147,35 @@ async function submitSelectedAssignment({ assignment, content, files = [] }) {
     })
     log('study:assignment-submit:response', submitCall.result)
     checkAuth(submitCall.result, '作业提交')
+    if (controller.signal.aborted) return
 
-    assignmentSubmitResult.value = submitCall.result.body || {
-      status: submitCall.result.status,
-      statusText: submitCall.result.statusText,
+    const confirmation = await confirmSubmission(assignmentId)
+    if (controller.signal.aborted) return
+
+    if (confirmation.confirmed) {
+      for (const file of files) uploadedAttachmentCache.delete(getAttachmentCacheKey(assignmentId, file))
+      const submitTime = pickSubmitTime(confirmation.body) || pickSubmitTime(submitCall.result.body) || ''
+      assignmentSubmitResult.value = {
+        confirmed: true,
+        submitTime,
+        attachmentCount: extractSubmitViewAttachmentIds(confirmation.body).length,
+      }
+      markAssignmentSubmitted(assignmentId, submitTime || formatBackendTime())
+      await loadSubmitAttachmentResources(extractSubmitViewAttachmentIds(confirmation.body), assignmentDetailRequestId)
+    } else {
+      assignmentSubmitResult.value = { confirmed: false }
     }
-
-    const submitTime = pickSubmitTime(submitCall.result.body) || formatBackendTime()
-    markAssignmentSubmitted(assignmentId, submitTime)
-    await loadSubmitAttachmentResources(uploadedAttachmentIds, assignmentDetailRequestId)
-    await refreshAssignmentsAfterSubmit(assignmentId, submitTime)
+    await refreshAssignmentsAfterSubmit(assignmentId)
   } catch (error) {
+    if (controller.signal.aborted) return
     assignmentSubmitError.value = error?.message || '提交作业失败'
     logError('study:assignment-submit:error', error)
   } finally {
-    submittingAssignment.value = false
+    if (submitController === controller) {
+      submitController = null
+      submittingAssignment.value = false
+      uploadProgress.value = null
+    }
   }
 }
 
@@ -1226,7 +1302,7 @@ onUnmounted(() => {
             <strong>{{ urgentAssignments.length }}</strong>
           </div>
           <div class="metric-card metric-overdue">
-            <span>已逾期</span>
+            <span>截止未交</span>
             <strong>{{ overdueAssignments.length }}</strong>
           </div>
         </div>
@@ -1337,6 +1413,7 @@ onUnmounted(() => {
         :submit-view="assignmentSubmitView"
         :submit-error="assignmentSubmitError"
         :submit-result="assignmentSubmitResult"
+        :upload-progress="uploadProgress"
         :submitting="submittingAssignment"
         @submit="submitSelectedAssignment"
       />

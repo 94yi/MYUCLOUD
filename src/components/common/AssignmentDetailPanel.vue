@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import VideoPreview from './VideoPreview.vue'
 import { fetchBackend, friendlyError, responseErrorMessage } from '../../api/http.js'
 import { assertUcloudOk } from '../../api/ucloud.js'
+import { allowsLateSubmission } from '../../utils/deadline.js'
 import { BUSINESS_AUTH, TENANT_ID, TOKEN_KEY, buildPreviewUrl, buildFileUrl, isVideoResource, getResourcePreviewUrl, pickPreviewData } from '../../api/ucloud'
 
 const props = defineProps({
@@ -40,6 +41,10 @@ const props = defineProps({
   },
   submitResult: {
     type: [Object, String],
+    default: null,
+  },
+  uploadProgress: {
+    type: Object,
     default: null,
   },
 })
@@ -418,6 +423,42 @@ function clearPickedFiles() {
   }
 }
 
+// 截止后能否提交只看学校的 isOvertimeCommit；submit-view 与详情都会带，未知时不拦，只提示
+const isPastDeadline = computed(() => {
+  const deadline = new Date(getAssignmentDeadline(props.assignment, props.detail)).getTime()
+  return Number.isFinite(deadline) && deadline < Date.now()
+})
+const lateSubmissionAllowed = computed(() => allowsLateSubmission(props.submitView) ?? allowsLateSubmission(props.detail))
+const submissionClosed = computed(() => isPastDeadline.value && lateSubmissionAllowed.value === false)
+
+const LARGE_UPLOAD_BYTES = 20 * 1024 * 1024
+
+const pickedTotalSize = computed(() => pickedFiles.value.reduce((sum, file) => sum + (file.size || 0), 0))
+
+const uploadProgressText = computed(() => {
+  const progress = props.uploadProgress
+  if (!progress) return ''
+
+  const prefix = progress.count > 1 ? `附件 ${progress.index}/${progress.count}「${progress.name}」` : `附件「${progress.name}」`
+  const retry = progress.attempt > 1 ? '（网络中断，正在重试）' : ''
+  if (progress.sent) return `${prefix}已发送，等待学校服务器处理…${retry}`
+
+  const total = progress.total || progress.size || 0
+  const percent = total ? Math.floor((progress.loaded / total) * 100) : 0
+  const seconds = (progress.elapsedMs || 0) / 1000
+  const speed = seconds > 1 ? `，${formatFileSize(progress.loaded / seconds)}/s` : ''
+
+  return `正在上传${prefix} ${percent}%（${formatFileSize(progress.loaded)} / ${formatFileSize(total)}${speed}）${retry}`
+})
+
+const uploadPercent = computed(() => {
+  const progress = props.uploadProgress
+  if (!progress) return 0
+  if (progress.sent) return 100
+  const total = progress.total || progress.size || 0
+  return total ? Math.min(100, Math.floor((progress.loaded / total) * 100)) : 0
+})
+
 function submitAssignment() {
   emit('submit', {
     assignment: props.assignment,
@@ -512,7 +553,13 @@ function submitAssignment() {
         </div>
       </div>
 
+      <section v-if="submissionClosed" class="notice warning submission-closed">
+        <strong>已截止，不能再提交</strong>
+        <span>{{ assignment.isCompleted ? '截止时间已过，学校不允许修改已提交的内容。' : '截止时间已过，教师没有开放补交。如需补交请联系老师。' }}</span>
+      </section>
+
       <form
+        v-else
         class="assignment-submit-box"
         :class="{ 'drag-active': dragActive }"
         @submit.prevent="submitAssignment"
@@ -523,8 +570,10 @@ function submitAssignment() {
       >
         <div class="subsection-header">
           <div>
-            <strong>提交作业</strong>
-            <span>填写内容或添加附件后提交，可直接把文件拖到这里</span>
+            <strong>{{ isPastDeadline ? '补交作业' : '提交作业' }}</strong>
+            <span v-if="isPastDeadline && lateSubmissionAllowed">已过截止时间，教师允许补交，提交后会记为补交</span>
+            <span v-else-if="isPastDeadline">已过截止时间，未能确认是否允许补交，学校可能拒绝这次提交</span>
+            <span v-else>填写内容或添加附件后提交，可直接把文件拖到这里</span>
           </div>
         </div>
 
@@ -583,11 +632,24 @@ function submitAssignment() {
           <strong>松开即可添加附件</strong>
         </div>
 
+        <p v-if="pickedTotalSize >= LARGE_UPLOAD_BYTES && !submitting" class="upload-hint">
+          附件共 {{ formatFileSize(pickedTotalSize) }}，网络较慢时可能需要几分钟，上传期间请不要离开此页面。
+        </p>
+
+        <section v-if="submitting && uploadProgress" class="upload-progress" aria-live="polite">
+          <div class="upload-progress-bar"><span :style="{ width: `${uploadPercent}%` }" /></div>
+          <span>{{ uploadProgressText }}</span>
+        </section>
+
         <section v-if="submitError" class="notice error">
           {{ submitError }}
+          <template v-if="pickedFiles.length > 0">已上传成功的附件再次提交时不会重复上传。</template>
         </section>
-        <section v-else-if="submitResult" class="notice success">
-          提交请求已完成
+        <section v-else-if="submitResult?.confirmed" class="notice success">
+          学校已确认收到提交{{ submitResult.submitTime ? `（${submitResult.submitTime}）` : '' }}{{ submitResult.attachmentCount ? `，附件 ${submitResult.attachmentCount} 个` : '' }}。
+        </section>
+        <section v-else-if="submitResult" class="notice warning">
+          提交请求已发出，但暂未在学校查到提交记录。请稍后刷新作业列表确认，必要时在企业微信云邮中核对。
         </section>
       </form>
 

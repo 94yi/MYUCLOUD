@@ -20,7 +20,7 @@ export function getDeadlineLevel(daysLeft, isCompleted) {
 export function getAssignmentStatus(record, daysLeft, isCompleted) {
   if (isCompleted) return '已提交'
   if (daysLeft === null) return '待完成'
-  if (daysLeft < 0) return '已逾期'
+  if (daysLeft < 0) return '已截止未交'
   if (daysLeft === 0) return '今天截止'
   if (daysLeft === 1) return '明天截止'
   if (daysLeft <= 7) return '临近截止'
@@ -32,6 +32,7 @@ export function getAssignmentPriority(assignment) {
   if (assignment.level === 'overdue') return 0
   if (assignment.level === 'danger') return 1
   if (assignment.level === 'warning') return 2
+  if (assignment.level === 'missed') return 5
   if (assignment.isCompleted) return 4
 
   return 3
@@ -56,9 +57,22 @@ function isTruthyFlag(value) {
   return text === '1' || text === 'true' || text === 'yes'
 }
 
-export function isRecordCompleted(record) {
-  const status = Number(record.status)
+// 学校字段的真实含义（以真实账号数据核对过）：
+// - status：作业本身的状态，2 进行中、3 已截止，与是否提交无关；
+// - assignmentStatus：本人的提交状态，99 未提交，0 已提交、1 已批改；
+// - isOverTime：1 表示是截止后补交的；isOvertimeCommit（详情、submit-view）：1 表示允许补交。
+export const NOT_SUBMITTED_STATUS = 99
 
+/** 按 assignmentStatus 判断是否已提交；字段缺失或无法识别时返回 null，交给其他字段判断。 */
+function submissionFromAssignmentStatus(value) {
+  if (value === null || value === undefined || value === '') return null
+  const status = Number(value)
+  if (!Number.isFinite(status)) return null
+
+  return status !== NOT_SUBMITTED_STATUS
+}
+
+export function isRecordCompleted(record) {
   if (
     hasValue(record.submitTime) ||
     hasValue(record.commitTime) ||
@@ -68,28 +82,68 @@ export function isRecordCompleted(record) {
     return true
   }
 
-  if (status === 3) return true
-  if (status === 2) return false
+  const fromStatus = submissionFromAssignmentStatus(record.assignmentStatus)
+  if (fromStatus !== null) return fromStatus
 
-  if (
+  return (
     isTruthyFlag(record.submitStatus) ||
     isTruthyFlag(record.commitStatus) ||
     isTruthyFlag(record.isSubmit) ||
     isTruthyFlag(record.isSubmitted) ||
     isTruthyFlag(record.isCommit)
-  ) {
-    return true
+  )
+}
+
+/** 是否允许截止后补交；学校没给这个字段时返回 null。 */
+export function allowsLateSubmission(body) {
+  const data = body?.data ?? body
+  if (!data || typeof data !== 'object' || data.isOvertimeCommit === undefined || data.isOvertimeCommit === null) {
+    return null
   }
 
-  return Number.isFinite(status) ? status !== 2 : false
+  return Number(data.isOvertimeCommit) === 1
 }
+
+function hasText(value) {
+  if (typeof value !== 'string') return hasValue(value)
+
+  const text = value.replace(/<[^>]*>/g, '').replace(/&nbsp;|\u00a0/g, ' ').trim()
+
+  return text !== '' && text !== 'null' && text !== 'undefined'
+}
+
+// submit-view 对未提交的作业也会返回 assignmentId（真实值为 -1），截止后 status 也是 3，
+// 所以只认 assignmentStatus 与真实的提交内容
+export function isSubmitViewSubmitted(body) {
+  const data = body?.data ?? body
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+
+  const fromStatus = submissionFromAssignmentStatus(data.assignmentStatus)
+  if (fromStatus !== null) return fromStatus
+
+  return (
+    hasValue(data.submitTime) ||
+    hasValue(data.commitTime) ||
+    hasValue(data.submittedAt) ||
+    hasValue(data.submitAt) ||
+    hasText(data.assignmentContent) ||
+    hasText(data.assignmentComment) ||
+    (Array.isArray(data.attachmentIds) && data.attachmentIds.some((id) => hasValue(id)))
+  )
+}
+
+// 学校的作业列表跨越所有学期，又不带课程。没有归到本学期课程、而且截止已久的未交作业
+// 算“往期未交”，不再混进“已逾期”里催促。
+export const CURRENT_TERM_GRACE_DAYS = 60
 
 export function normalizeAssignment(record) {
   const isCompleted = isRecordCompleted(record)
   const daysLeft = getDaysLeft(record.assignmentEndTime)
-  const level = getDeadlineLevel(daysLeft, isCompleted)
   const courseId = record.siteId || record.courseId || record.rawSiteId || ''
   const courseName = record.siteName || record.courseName || record.rawSiteName || ''
+  const isPastTerm = !courseId && daysLeft !== null && daysLeft < -CURRENT_TERM_GRACE_DAYS
+  let level = getDeadlineLevel(daysLeft, isCompleted)
+  if (level === 'overdue' && isPastTerm) level = 'missed'
 
   return {
     id: record.id,
@@ -103,9 +157,11 @@ export function normalizeAssignment(record) {
     daysLeft,
     level,
     isUrgent: level === 'danger' || level === 'warning',
-    isOverdue: level === 'overdue',
+    isOverdue: level === 'overdue' || level === 'missed',
+    isMissed: level === 'missed',
+    isLateSubmission: Number(record.isOverTime) === 1,
     isCompleted,
-    status: getAssignmentStatus(record, daysLeft, isCompleted),
+    status: level === 'missed' ? '往期未交' : getAssignmentStatus(record, daysLeft, isCompleted),
     raw: record,
   }
 }
@@ -123,6 +179,9 @@ export function sortAssignments(records) {
 
     const leftDeadline = toTimestamp(left.deadline) ?? Number.MAX_SAFE_INTEGER
     const rightDeadline = toTimestamp(right.deadline) ?? Number.MAX_SAFE_INTEGER
+
+    // 已截止未交的作业倒序排列：刚过截止的排最前，越久越靠后
+    if (left.isOverdue && right.isOverdue) return rightDeadline - leftDeadline
 
     // 已完成的作业倒序排列：最近提交（缺失时回退到最近截止）的排最前
     if (left.isCompleted && right.isCompleted) {

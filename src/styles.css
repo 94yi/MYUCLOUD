@@ -393,6 +393,12 @@ p {
   color: var(--success-green);
 }
 
+.notice.warning {
+  border-color: #f0dcc0;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .study-overview {
   position: relative;
   display: grid;
@@ -973,6 +979,10 @@ p {
   color: var(--success-green);
 }
 
+.deadline-time .deadline-relative.level-missed {
+  color: var(--muted);
+}
+
 
 .assignment-detail-panel {
   gap: 14px;
@@ -1306,6 +1316,12 @@ pre.assignment-content-box {
   border-color: var(--warning);
   background: #ffffff;
   color: #7c551f;
+}
+
+.assignment-status.level-missed {
+  border-color: var(--line);
+  background: #ffffff;
+  color: var(--muted);
 }
 
 .assignment-status.level-submitted {
@@ -2343,4 +2359,38 @@ pre.assignment-content-box {
   opacity: 0.5;
   cursor: wait;
   text-decoration: none !important;
+}
+
+.upload-hint {
+  margin: 0;
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.upload-progress {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.upload-progress-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.upload-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success-green);
+  transition: width 0.2s ease;
+}
+
+.notice.submission-closed {
+  display: grid;
+  gap: 4px;
 }

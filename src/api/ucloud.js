@@ -1,5 +1,6 @@
 import { fetchBackend, readBackendPayload, responseErrorMessage } from './http.js'
-import { backendUrl } from '../utils/runtime.js'
+import { STATIC_PREVIEW, PREVIEW_MESSAGE, backendUrl } from '../utils/runtime.js'
+import { uploadWithProgress } from './upload.js'
 
 export const TOKEN_KEY = 'mock-ucloud-blade-auth'
 export const DEFAULT_LOGIN_URL = '/api/login'
@@ -268,7 +269,8 @@ export async function getAssignmentSubmitView(token, assignmentId) {
   }
 }
 
-export async function uploadBusinessResource(token, { file, userId, bizType = 3 }) {
+export async function uploadBusinessResource(token, { file, userId, bizType = 3, onProgress, signal }) {
+  if (STATIC_PREVIEW) throw new Error(PREVIEW_MESSAGE)
   const formData = new FormData()
   formData.append('file', file)
   formData.append('userId', String(userId))
@@ -291,10 +293,11 @@ export async function uploadBusinessResource(token, { file, userId, bizType = 3 
       bizType: String(bizType),
     },
   }
-  const response = await fetchBackend(request.url, {
-    method: request.method,
+  const response = await uploadWithProgress(request.url, {
     headers: request.headers,
     body: formData,
+    onProgress,
+    signal,
   })
 
   return {

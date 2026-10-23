@@ -1,5 +1,6 @@
 import { proxy } from 'hono/proxy'
 import { ApiError } from '../http.js'
+import { logUpstreamShape, shouldInspect } from './inspect.js'
 
 export const PROXY_RULES = [
   { prefix: '/ucloud', origin: 'https://apiucloud.bupt.edu.cn' },
@@ -24,14 +25,22 @@ export function mountProxyRoutes(app) {
       if (rule.anonymous) {
         for (const name of ['Authorization', 'Blade-Auth', 'Tenant-Id']) request.headers.delete(name)
       }
+      const inspect = rule.prefix === '/ucloud' && shouldInspect(target.pathname)
+      const inspectedRequest = inspect && (request.headers.get('content-type') || '').includes('json') ? request.clone() : null
+      const started = Date.now()
       try {
         const response = await proxy(target, { raw: request, redirect: 'manual', strictConnectionProcessing: true })
         // 学校的 CORS 规则由本后端面向前端的规则替换。
         for (const name of [...response.headers.keys()]) {
           if (name.startsWith('access-control-')) response.headers.delete(name)
         }
+        if (inspect) {
+          const logged = logUpstreamShape({ method: c.req.method, upstreamPath: target.pathname, request: inspectedRequest, response: response.clone(), started })
+          try { c.executionCtx.waitUntil(logged) } catch { await logged }
+        }
         return response
       } catch (error) {
+        console.error(JSON.stringify({ event: 'proxy_failure', host: target.hostname, message: error.message, cause: error.cause?.message }))
         if (error.status) throw error
         throw new ApiError(502, `无法连接上游服务 ${target.hostname}`)
       }

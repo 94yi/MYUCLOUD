@@ -69,8 +69,8 @@ const assignmentGroups = computed(() => {
   const groups = [
     {
       key: 'overdue',
-      label: '已逾期',
-      hint: '需要尽快处理',
+      label: '已截止未交',
+      hint: '打开详情可查看是否允许补交',
       assignments: props.assignments.filter((assignment) => assignment.level === 'overdue'),
     },
     {
@@ -88,8 +88,14 @@ const assignmentGroups = computed(() => {
       assignments: props.assignments.filter(
         (assignment) =>
           !assignment.isCompleted &&
-          !['overdue', 'danger', 'warning'].includes(assignment.level),
+          !['overdue', 'missed', 'danger', 'warning'].includes(assignment.level),
       ),
+    },
+    {
+      key: 'missed',
+      label: '往期未交',
+      hint: '往学期截止且没有提交，仅供查看',
+      assignments: props.assignments.filter((assignment) => assignment.level === 'missed'),
     },
     {
       key: 'completed',
@@ -105,7 +111,7 @@ const assignmentGroups = computed(() => {
 function getRelativeDeadline(assignment) {
   if (assignment.isCompleted) return '已完成'
   if (assignment.daysLeft === null || assignment.daysLeft === undefined) return '未设置时间'
-  if (assignment.daysLeft < 0) return `已逾期 ${Math.abs(assignment.daysLeft)} 天`
+  if (assignment.daysLeft < 0) return `已截止 ${Math.abs(assignment.daysLeft)} 天`
   if (assignment.daysLeft === 0) return '今天截止'
   if (assignment.daysLeft === 1) return '明天截止'
 
@@ -137,7 +143,7 @@ function getRelativeDeadline(assignment) {
             @change="emit('update:includeCompleted', $event.target.checked)"
           />
           <span class="toggle-track" aria-hidden="true"><i /></span>
-          <span>显示已提交</span>
+          <span>显示已提交与往期</span>
         </label>
       </div>
     </div>
