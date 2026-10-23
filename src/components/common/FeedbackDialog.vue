@@ -66,7 +66,7 @@ onMounted(() => {
     <dialog ref="dialog" class="feedback-dialog" aria-labelledby="feedback-title" @close="emit('close')">
       <header class="feedback-header">
         <strong id="feedback-title">反馈问题</strong>
-        <button type="button" @click="dialog.close()">关闭</button>
+        <button type="button" class="button-secondary" @click="dialog.close()">关闭</button>
       </header>
 
       <section v-if="sentId" class="notice success feedback-sent" role="status">
@@ -90,13 +90,13 @@ onMounted(() => {
           <input v-model="contact" maxlength="100" type="text" placeholder="QQ、邮箱等，需要回复时使用" />
         </label>
 
-        <label class="feedback-report-toggle">
+        <label class="toggle-control feedback-report-toggle">
           <input v-model="includeReport" type="checkbox" />
+          <span class="toggle-track" aria-hidden="true"><i /></span>
           <span>附带诊断报告（已脱敏）</span>
         </label>
         <p class="feedback-hint">
-          报告只包含页面版本、浏览器类型、各作业的状态码与截止天数、当前作业的字段结构和最近的错误信息；
-          不包含姓名、学号、作业标题、课程名、提交内容、文件和登录凭证。作业编号已替换为不可反推的短引用。
+          报告只包含页面版本、浏览器类型、各作业的状态码与截止天数、当前作业的字段结构和最近的错误信息；不包含姓名、学号、作业标题、课程名、提交内容、文件和登录凭证。作业编号已替换为不可反推的短引用。
         </p>
         <p v-if="reportError" class="notice warning">{{ reportError }}</p>
 
@@ -138,7 +138,7 @@ onMounted(() => {
   display: grid;
   gap: 12px;
 }
-.feedback-form > label {
+.feedback-form > label:not(.toggle-control) {
   display: grid;
   gap: 6px;
   color: var(--muted);
@@ -149,10 +149,7 @@ onMounted(() => {
   resize: vertical;
 }
 .feedback-form .feedback-report-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink);
+  justify-self: start;
 }
 .feedback-hint {
   margin: -4px 0 0;
