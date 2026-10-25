@@ -69,25 +69,19 @@ export function groupTimetableCourses(courses, day) {
   return groups
 }
 
-// 备注与课表缓存分开保存，重新同步或切换节次模式不会丢失；按实际日期和起始节次定位。
-export const TIMETABLE_NOTES_KEY = 'mock-ucloud-timetable-notes-v1'
-
-export function timetableNoteKey(week, day, period) {
-  const date = new Date(`${week.date}T00:00:00Z`)
-  const monday = date.getTime() - ((date.getUTCDay() + 6) % 7) * 86400000
-  return `${new Date(monday + (day - 1) * 86400000).toISOString().slice(0, 10)}#${period}`
-}
+// 备注按课程名保存，同一课程在所有周次、时段共用；与课表缓存分开，重新同步不会丢失。
+export const TIMETABLE_NOTES_KEY = 'mock-ucloud-course-notes-v1'
 
 export function readTimetableNotes(storage, username) {
   const notes = JSON.parse(storage.getItem(TIMETABLE_NOTES_KEY) || '{}')?.[username]
   return notes && typeof notes === 'object' ? notes : {}
 }
 
-export function writeTimetableNote(storage, username, key, text) {
+export function writeTimetableNote(storage, username, courseName, text) {
   const all = JSON.parse(storage.getItem(TIMETABLE_NOTES_KEY) || '{}') || {}
   const notes = { ...all[username] }
-  if (text.trim()) notes[key] = text.trim()
-  else delete notes[key]
+  if (text.trim()) notes[courseName] = text.trim()
+  else delete notes[courseName]
   storage.setItem(TIMETABLE_NOTES_KEY, JSON.stringify({ ...all, [username]: notes }))
   return notes
 }
