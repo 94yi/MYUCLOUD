@@ -40,3 +40,15 @@ test('真实的空周可以缓存，账号、学期和模式不同的课表不�
   assert.equal(mergeTimetableWeek(previous, 'student', { ...secondWeek, date: '2027-03-18' }).weeks.length, 1)
   assert.equal(mergeTimetableWeek(previous, 'student', { ...secondWeek, mode: 'another-mode' }).weeks.length, 1)
 })
+
+test('课表备注按账号和实际日期保存，清空即删除', async () => {
+  const { readTimetableNotes, timetableNoteKey, writeTimetableNote } = await import('../src/utils/timetable.js')
+  const data = new Map()
+  const storage = { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) }
+  const key = timetableNoteKey({ date: '2026-09-17' }, 3, 5)
+  assert.equal(key, '2026-09-16#5')
+  assert.deepEqual(writeTimetableNote(storage, 'student', key, '  带实验报告 \n'), { [key]: '带实验报告' })
+  assert.deepEqual(readTimetableNotes(storage, 'another-student'), {})
+  assert.deepEqual(writeTimetableNote(storage, 'student', key, '   '), {})
+  assert.deepEqual(readTimetableNotes(storage, 'student'), {})
+})

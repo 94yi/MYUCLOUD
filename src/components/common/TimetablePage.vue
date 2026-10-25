@@ -2,7 +2,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import JwglAuthBar from './JwglAuthBar.vue'
 import { jwglLoggedIn, jwglRequest, jwglSessionId, jwglUsername } from '../../api/jwgl.js'
-import { TIMETABLE_KEY, currentTimetableWeek, groupTimetableCourses, mergeTimetableWeek, readTimetableCache } from '../../utils/timetable.js'
+import {
+  TIMETABLE_KEY, currentTimetableWeek, groupTimetableCourses, mergeTimetableWeek, readTimetableCache,
+  readTimetableNotes, timetableNoteKey, writeTimetableNote,
+} from '../../utils/timetable.js'
 
 const error = ref('')
 const storageWarning = ref('')
@@ -23,6 +26,16 @@ const current = computed(() => weeks.value.find((week) => week.week === selected
 const groups = computed(() => Array.from({ length: 7 }, (_, index) => groupTimetableCourses(current.value?.courses || [], index + 1)))
 const savedAt = computed(() => cache.value ? new Date(cache.value.savedAt).toLocaleString('zh-CN', { hour12: false }) : '')
 const missingWeeks = computed(() => (current.value?.weeks || []).filter((week) => !weeks.value.some((saved) => saved.week === week)))
+const notes = ref({})
+const editingNote = ref(null)
+watch(() => cache.value?.username, (username) => {
+  editingNote.value = null
+  try { notes.value = username ? readTimetableNotes(localStorage, username) : {} } catch {
+    notes.value = {}
+    storageWarning.value = '无法读取本地课表备注。'
+  }
+}, { immediate: true })
+watch(selectedWeek, () => { editingNote.value = null })
 let controller
 onBeforeUnmount(() => controller?.abort())
 watch(jwglSessionId, () => controller?.abort(), { flush: 'sync' })
@@ -68,6 +81,8 @@ async function syncTimetable() {
   }
 }
 
+const vFocus = { mounted: (el) => el.focus() }
+
 function moveWeek(direction) {
   const index = weeks.value.findIndex((week) => week.week === selectedWeek.value)
   selectedWeek.value = weeks.value[index + direction]?.week ?? selectedWeek.value
@@ -79,6 +94,25 @@ function groupAt(day, period) {
 
 function isCovered(day, period) {
   return groups.value[day - 1].some((group) => group.start < period && group.end >= period)
+}
+
+function noteKey(day, period) {
+  return timetableNoteKey(current.value, day, period)
+}
+
+function editNote(day, period) {
+  const key = noteKey(day, period)
+  editingNote.value = { key, text: notes.value[key] || '' }
+}
+
+function saveNote() {
+  const { key, text } = editingNote.value
+  try {
+    notes.value = writeTimetableNote(localStorage, cache.value.username, key, text)
+    editingNote.value = null
+  } catch {
+    storageWarning.value = '浏览器未能保存备注，请检查存储空间或隐私设置。'
+  }
 }
 </script>
 
@@ -141,6 +175,15 @@ function isCovered(day, period) {
                     <small>第 {{ course.start }}–{{ course.end }} 节</small>
                     <details><summary>课程详情</summary><p v-for="detail in course.details" :key="detail">{{ detail }}</p></details>
                   </article>
+                  <form v-if="editingNote?.key === noteKey(day, period.number)" class="timetable-note-editor" @submit.prevent="saveNote" @keydown.esc="editingNote = null">
+                    <textarea v-model="editingNote.text" v-focus aria-label="备注内容" placeholder="记录作业、考试、调课…" @keydown.enter.meta.prevent="saveNote" @keydown.enter.ctrl.prevent="saveNote"></textarea>
+                    <div class="inline-actions">
+                      <button type="submit">保存</button>
+                      <button class="button-secondary" type="button" @click="editingNote = null">取消</button>
+                    </div>
+                  </form>
+                  <button v-else-if="notes[noteKey(day, period.number)]" class="timetable-note" type="button" title="编辑备注" @click="editNote(day, period.number)">{{ notes[noteKey(day, period.number)] }}</button>
+                  <button v-else class="timetable-note-add" type="button" :aria-label="`为${current.days[day - 1].label}第 ${period.number} 节添加备注`" @click="editNote(day, period.number)">+ 备注</button>
                 </td>
               </template>
             </tr>
@@ -192,4 +235,16 @@ td { vertical-align: top; }
 .timetable-course details { font-size: 11px; line-height: 1.6; }
 .timetable-course summary { cursor: pointer; color: var(--cloud-blue); }
 .timetable-course details p { margin-top: 5px; }
+td { position: relative; padding-bottom: 28px; }
+.timetable-note, .timetable-note-add { min-height: 0; font-size: 11px; font-weight: 400; line-height: 1.5; text-align: left; }
+.timetable-note { display: block; width: 100%; margin-top: 4px; padding: 5px 7px; border: 1px solid #f0d98a; border-radius: 6px; background: #fff8db; color: #5c4a12; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timetable-note:not(:disabled):hover { background: #fff1bf; }
+.timetable-note-add { position: absolute; right: 4px; bottom: 4px; padding: 2px 6px; border: 1px dashed #cbd5e1; background: white; color: var(--muted); opacity: 0; }
+.timetable-note-add:not(:disabled):hover { background: var(--cloud-blue-soft); color: var(--cloud-blue); }
+td:hover .timetable-note-add, .timetable-note-add:focus-visible { opacity: 1; }
+@media (hover: none) { .timetable-note-add { opacity: 0.6; } }
+.timetable-note-editor { display: grid; gap: 6px; margin-top: 4px; }
+.timetable-note-editor textarea { min-height: 64px; padding: 6px 8px; font-size: 12px; }
+.timetable-note-editor button { min-height: 28px; padding: 0 10px; font-size: 12px; }
+.timetable-note-editor .inline-actions { gap: 6px; }
 </style>
