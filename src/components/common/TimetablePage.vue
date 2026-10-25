@@ -4,7 +4,7 @@ import JwglAuthBar from './JwglAuthBar.vue'
 import { jwglLoggedIn, jwglRequest, jwglSessionId, jwglUsername } from '../../api/jwgl.js'
 import {
   TIMETABLE_KEY, currentTimetableWeek, groupTimetableCourses, mergeTimetableWeek, readTimetableCache,
-  readTimetableNotes, writeTimetableNote,
+  LEGACY_TIMETABLE_NOTES_KEY, migrateLegacyTimetableNotes, readTimetableNotes, writeTimetableNote,
 } from '../../utils/timetable.js'
 
 const error = ref('')
@@ -27,14 +27,29 @@ const groups = computed(() => Array.from({ length: 7 }, (_, index) => groupTimet
 const savedAt = computed(() => cache.value ? new Date(cache.value.savedAt).toLocaleString('zh-CN', { hour12: false }) : '')
 const missingWeeks = computed(() => (current.value?.weeks || []).filter((week) => !weeks.value.some((saved) => saved.week === week)))
 const notes = ref({})
+const legacyNotes = ref({})
 const editingNote = ref(null)
-watch(() => cache.value?.username, (username) => {
-  editingNote.value = null
-  try { notes.value = username ? readTimetableNotes(localStorage, username) : {} } catch {
-    notes.value = {}
+// 课表同步出新周次后再试一次迁移，之前对不上课程的旧备注可能就能归属了。
+watch(cache, (value, previous) => {
+  if (value?.username !== previous?.username) editingNote.value = null
+  try {
+    legacyNotes.value = value ? migrateLegacyTimetableNotes(localStorage, value) : {}
+    notes.value = value ? readTimetableNotes(localStorage, value.username) : {}
+  } catch {
     storageWarning.value = '无法读取本地课表备注。'
   }
 }, { immediate: true })
+
+function clearLegacyNotes() {
+  try {
+    const all = JSON.parse(localStorage.getItem(LEGACY_TIMETABLE_NOTES_KEY) || '{}') || {}
+    delete all[cache.value.username]
+    localStorage.setItem(LEGACY_TIMETABLE_NOTES_KEY, JSON.stringify(all))
+    legacyNotes.value = {}
+  } catch {
+    storageWarning.value = '浏览器未能清除旧备注。'
+  }
+}
 watch(selectedWeek, () => { editingNote.value = null })
 let controller
 onBeforeUnmount(() => controller?.abort())
@@ -171,7 +186,7 @@ function saveNote() {
                     <small>第 {{ course.start }}–{{ course.end }} 节</small>
                     <details><summary>课程详情</summary><p v-for="detail in course.details" :key="detail">{{ detail }}</p></details>
                     <form v-if="editingNote?.slot === `${day}-${period.number}-${index}`" class="timetable-note-editor" @submit.prevent="saveNote" @keydown.esc="editingNote = null">
-                      <textarea v-model="editingNote.text" v-focus :aria-label="`${course.name}备注`" placeholder="记录作业、考试、调课…（所有周次共用）" @keydown.enter.meta.prevent="saveNote" @keydown.enter.ctrl.prevent="saveNote"></textarea>
+                      <textarea v-model="editingNote.text" v-focus :aria-label="`${course.name}备注`" @keydown.enter.meta.prevent="saveNote" @keydown.enter.ctrl.prevent="saveNote"></textarea>
                       <div class="inline-actions">
                         <button type="submit">保存</button>
                         <button class="button-secondary" type="button" @click="editingNote = null">取消</button>
@@ -190,6 +205,11 @@ function saveNote() {
     <div v-else-if="!busy" class="empty-state empty-state-card">
       <strong>暂无课表</strong>
     </div>
+    <details v-if="Object.keys(legacyNotes).length" class="timetable-legacy-notes" open>
+      <summary>空白格旧备注（{{ Object.keys(legacyNotes).length }}）</summary>
+      <ul><li v-for="(text, key) in legacyNotes" :key="key">{{ key.replace('#', ' 第 ') }} 节：{{ text }}</li></ul>
+      <button class="button-secondary" type="button" @click="clearLegacyNotes">清除</button>
+    </details>
     <details v-if="cache" class="timetable-settings">
       <summary>课表设置</summary>
       <div class="timetable-settings-content">
@@ -237,6 +257,10 @@ td { vertical-align: top; }
 .timetable-note-add { justify-self: start; padding: 2px 6px; border: 1px dashed #cbd5e1; background: white; color: var(--muted); }
 .timetable-note-add:not(:disabled):hover { background: var(--cloud-blue-soft); color: var(--cloud-blue); }
 .timetable-note-editor { display: grid; gap: 6px; }
+.timetable-legacy-notes { display: grid; gap: 8px; font-size: 13px; }
+.timetable-legacy-notes > summary { cursor: pointer; color: var(--muted); }
+.timetable-legacy-notes ul { margin: 8px 0; padding-left: 18px; white-space: pre-wrap; }
+.timetable-legacy-notes button { justify-self: start; min-height: 32px; font-size: 12px; }
 .timetable-note-editor textarea { min-height: 64px; padding: 6px 8px; font-size: 12px; }
 .timetable-note-editor button { min-height: 28px; padding: 0 10px; font-size: 12px; }
 .timetable-note-editor .inline-actions { gap: 6px; }
