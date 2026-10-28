@@ -38,7 +38,7 @@ import { buildFeedbackReport, collectKnownSecrets } from './utils/feedback-repor
 import { jwglSessionId } from './api/jwgl.js'
 
 const ASSIGNMENT_FETCH_SIZE = 9999
-const debugEnabled = import.meta.env.MODE !== 'pages' && import.meta.env.MODE !== 'snoval' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
+const debugEnabled = import.meta.env.MODE !== 'pages' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
 const DebugPanel = debugEnabled
   ? defineAsyncComponent(() => import('./components/common/DebugPanel.vue'))
   : null
@@ -1343,23 +1343,23 @@ onUnmounted(() => {
       </section>
 
       <div class="study-columns">
-      <CourseGrid
-        :courses="courses"
-        :loading="loadingStudy"
-        :loading-course-id="loadingCourseId"
-        :selected-course-id="selectedCourseId"
-        @select="openCourse"
-      />
-      <DeadlineList
-        v-model:include-completed="includeCompleted"
-        v-model:page-size="assignmentPageSize"
-        :assignments="visibleAssignments"
-        :last-loaded-at="lastLoadedAt"
-        :loading="loadingStudy"
-        :loading-assignment-id="loadingAssignmentId"
-        :selected-assignment-id="selectedAssignmentId"
-        @select="openAssignment"
-      />
+        <CourseGrid
+          :courses="courses"
+          :loading="loadingStudy"
+          :loading-course-id="loadingCourseId"
+          :selected-course-id="selectedCourseId"
+          @select="openCourse"
+        />
+        <DeadlineList
+          v-model:include-completed="includeCompleted"
+          v-model:page-size="assignmentPageSize"
+          :assignments="visibleAssignments"
+          :last-loaded-at="lastLoadedAt"
+          :loading="loadingStudy"
+          :loading-assignment-id="loadingAssignmentId"
+          :selected-assignment-id="selectedAssignmentId"
+          @select="openAssignment"
+        />
       </div>
     </template>
 

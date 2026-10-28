@@ -110,24 +110,38 @@ const emit = defineEmits([
           </button>
         </form>
 
-        <details class="alternative-login"><summary>使用 {{ credentialName }} 登录</summary><div class="token-form">
-          <label>
-            {{ credentialName }}
-            <input
-              :id="`${credentialScope}-token`"
-              :name="`${credentialScope}-token`"
-              :value="token"
+        <details class="alternative-login">
+          <summary>使用 {{ credentialName }} 登录</summary>
+          <div class="token-form">
+            <label>
+              {{ credentialName }}
+              <input
+                :id="`${credentialScope}-token`"
+                :name="`${credentialScope}-token`"
+                :value="token"
+                :disabled="STATIC_PREVIEW"
+                autocomplete="off"
+                spellcheck="false"
+                @input="emit('update:token', $event.target.value)"
+              />
+            </label>
+            <button
+              :disabled="STATIC_PREVIEW || loadingData || !token"
+              type="button"
+              @click="emit('blade-auth-login')"
+            >
+              {{ loadingData ? '加载中' : `${credentialName} 登录` }}
+            </button>
+            <button
               :disabled="STATIC_PREVIEW"
-              autocomplete="off"
-              spellcheck="false"
-              @input="emit('update:token', $event.target.value)"
-            />
-          </label>
-          <button :disabled="STATIC_PREVIEW || loadingData || !token" type="button" @click="emit('blade-auth-login')">
-            {{ loadingData ? '加载中' : `${credentialName} 登录` }}
-          </button>
-          <button :disabled="STATIC_PREVIEW" class="button-secondary" type="button" @click="emit('clear-token')">清空</button>
-        </div></details>
+              class="button-secondary"
+              type="button"
+              @click="emit('clear-token')"
+            >
+              清空
+            </button>
+          </div>
+        </details>
       </div>
     </details>
   </section>

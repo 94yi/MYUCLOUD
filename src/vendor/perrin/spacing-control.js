@@ -69,7 +69,7 @@ export function mountSpacingControl(options = {}) {
       ${scope}{--space-1:${v.unit}px!important;--space-2:${v.unit*2}px!important;--space-3:${v.unit*3}px!important;--space-4:${v.unit*4}px!important;--space-5:${v.unit*6}px!important;--space-6:${v.unit*8}px!important;--section-gap:${v.section}px!important;--card-padding:${v.card}px!important;--panel-padding:${v.card}px!important}
       ${scope} .section{padding-block:${v.section}px!important}
       ${scope} :is(.panel,.config-page,.section-block){padding:${v.card}px!important}
-      ${scope} :is(.course-grid,.metrics-grid,.stats,.live-services,.control-grid,.control-stack,.receipts-layout,.message-workspace,.detail-grid,.operator-lists,.asset-grid,.memory-list,.card-grid){gap:${v.grid}px!important}
+      ${scope} :is(.study-columns,.metrics-grid,.stats,.live-services,.control-grid,.control-stack,.receipts-layout,.message-workspace,.detail-grid,.operator-lists,.asset-grid,.memory-list,.card-grid){gap:${v.grid}px!important}
       ${scope} :is(.deadline-controls,.context-tabs,.actions,.config-actions,.asset-type-tabs,.main-config-modules,.pager,.asset-pager,.calendar-controls){gap:${v.controls}px!important}
       ${scope} :is(.auth-form,.token-form,.auth-methods,.config-form,.sample-form,.platform-form){row-gap:${v.form}px!important}
       ${scope} .main-config-modules{margin-bottom:${v.section}px!important}

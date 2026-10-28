@@ -28,9 +28,9 @@ export default defineConfig(({ mode }) => {
       __APP_COMMIT__: JSON.stringify(appCommit()),
     },
     base: mode === 'pages' ? './' : '/',
-    publicDir: ['pages', 'snoval'].includes(mode) ? false : 'public',
+    publicDir: mode === 'pages' ? false : 'public',
     plugins: [
-      ...(['pages', 'snoval'].includes(mode) ? [] : [backendPlugin()]),
+      ...(mode === 'pages' ? [] : [backendPlugin()]),
       ...(mode === 'pages' ? [{
         name: 'pages-cname',
         apply: 'build',
@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
         },
       }] : []),
       vue(),
-      ...(mode === 'development' ? [vueDevTools()] : []),
+      ...(mode === 'pages' ? [] : [vueDevTools()]),
     ],
     server: {
       cors: false,

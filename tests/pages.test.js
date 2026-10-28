@@ -49,6 +49,7 @@ test('未配置后端的 Pages 仍保留只读预览和课表缓存', { timeout:
   await assert.rejects(http.fetchBackend('/api/login', { method: 'POST', body: 'private-password' }), /此预览未连接后端/)
   const { default: App } = await server.ssrLoadModule('/src/App.vue')
   const html = await renderToString(createSSRApp(App))
+  assert.doesNotMatch(html, /href="\/geport\//)
   assert.match(html, /此预览未连接后端/)
   assert.match(html, /cached-student/)
   assert.match(html, /测试课程 &amp; 实验/)

@@ -1,5 +1,0 @@
-﻿snoval.link {
-    root * /srv/geport
-    encode zstd gzip
-    file_server
-}

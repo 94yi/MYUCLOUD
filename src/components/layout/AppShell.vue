@@ -1,7 +1,7 @@
 ﻿<script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { mountSpacingControl } from '../../vendor/perrin/spacing-control.js'
 import { PREVIEW_MESSAGE, STATIC_PREVIEW } from '../../utils/runtime.js'
+import { normalizeReportCoverUrl } from '../../utils/report-cover-url.js'
 
 const props = defineProps({
   userLabel: { type: String, default: '未登录' },
@@ -22,29 +22,73 @@ const props = defineProps({
 
 const emit = defineEmits(['change-view', 'feedback'])
 const shell = ref(null)
+const content = ref(null)
+const reportCoverUrl = normalizeReportCoverUrl(import.meta.env.VITE_REPORT_COVER_URL)
+const navigationItems = computed(() => [
+  { view: 'study', name: '课程与作业' },
+  { view: 'timetable', name: '课表' },
+  ...props.plugins,
+  ...(props.debugEnabled ? [{ view: 'debug', name: '调试' }] : []),
+])
+const activeNavigation = computed(() =>
+  ['course', 'assignment'].includes(props.activeView) ? 'study' : props.activeView,
+)
+const pageTitle = computed(() => {
+  if (props.activeView === 'course') return '课程详情'
+  if (props.activeView === 'assignment') return '作业详情'
+  return navigationItems.value.find((item) => item.view === props.activeView)?.name || '学习服务'
+})
+
 let spacing
-const pageTitle = computed(() => ({ study: '课程与作业', timetable: '我的课表', course: '课程详情', assignment: '作业详情', debug: '调试' }[props.activeView] || props.plugins.find(p => p.view === props.activeView)?.name || '学习服务'))
-onMounted(() => { spacing = mountSpacingControl({ root: shell.value, storageKey: 'snoval-spacing-v1' }) })
-onUnmounted(() => spacing?.destroy())
+let unmounted = false
+
+onMounted(async () => {
+  const { mountSpacingControl } = await import('../../vendor/perrin/spacing-control.js')
+  if (!unmounted) {
+    spacing = mountSpacingControl({ root: shell.value, storageKey: 'myucloud-spacing-v1' })
+  }
+})
+
+onUnmounted(() => {
+  unmounted = true
+  spacing?.destroy()
+})
 </script>
 
 <template>
   <main ref="shell" class="app-shell ui-app">
-    <button class="skip-link" type="button" @click="shell.querySelector('#workspace-content').focus()">跳转到内容</button>
+    <button class="skip-link" type="button" @click="content?.focus()">跳转到内容</button>
     <header class="app-header">
-      <a class="app-brand" href="#study"><span class="brand-mark" aria-hidden="true">u</span><strong>MyUCloud</strong></a>
+      <a class="app-brand" href="#study">
+        <span class="brand-mark" aria-hidden="true">u</span>
+        <strong>MyUCloud</strong>
+      </a>
       <nav class="view-tabs" aria-label="页面">
-        <button :aria-current="['study', 'course', 'assignment'].includes(activeView) ? 'page' : undefined" type="button" @click="emit('change-view', 'study')">课程与作业</button>
-        <button :aria-current="activeView === 'timetable' ? 'page' : undefined" type="button" @click="emit('change-view', 'timetable')">课表</button>
-        <button v-for="p in plugins" :key="p.view" :aria-current="activeView === p.view ? 'page' : undefined" type="button" @click="emit('change-view', p.view)">{{ p.name }}</button>
-        <button v-if="debugEnabled" type="button" @click="emit('change-view', 'debug')">调试</button>
+        <button
+          v-for="item in navigationItems"
+          :key="item.view"
+          :aria-current="activeNavigation === item.view ? 'page' : undefined"
+          type="button"
+          @click="emit('change-view', item.view)"
+        >
+          {{ item.name }}
+        </button>
       </nav>
-      <div class="header-tools"><a href="/geport/">报告封面</a><button v-if="!STATIC_PREVIEW" type="button" @click="emit('feedback')">反馈</button><span v-if="authenticated" class="system-account">{{ userLabel }}</span></div>
+      <div class="header-tools">
+        <a v-if="reportCoverUrl" :href="reportCoverUrl">报告封面</a>
+        <button v-if="!STATIC_PREVIEW" type="button" @click="emit('feedback')">反馈</button>
+        <span v-if="authenticated" class="system-account">{{ userLabel }}</span>
+      </div>
     </header>
     <section class="system-main" aria-label="当前页面">
-      <div class="system-page-title"><h1>{{ pageTitle }}</h1><span v-if="activeView === 'study'" class="page-description">课程资料与作业安排</span></div>
+      <div class="system-page-title">
+        <h1>{{ pageTitle }}</h1>
+        <span v-if="activeView === 'study'" class="page-description">课程资料与作业安排</span>
+      </div>
       <p v-if="STATIC_PREVIEW" class="notice" role="status">{{ PREVIEW_MESSAGE }}</p>
-      <div id="workspace-content" class="workspace-content" tabindex="-1"><slot /></div>
+      <div ref="content" id="workspace-content" class="workspace-content" tabindex="-1">
+        <slot />
+      </div>
     </section>
   </main>
 </template>
