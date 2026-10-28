@@ -14,7 +14,7 @@ test('Pages 构建适配项目子路径，且不包含本地插件、调试页�
   t.after(() => rmSync(outDir, { recursive: true, force: true }))
   await build({ mode: 'pages', logLevel: 'silent', build: { outDir, emptyOutDir: false } })
   const html = readFileSync(join(outDir, 'index.html'), 'utf8')
-  assert.equal(readFileSync(join(outDir, 'CNAME'), 'utf8'), 'u.aucept.in\n')
+  assert.equal(readFileSync(join(outDir, 'CNAME'), 'utf8').trim(), 'u.aucept.in')
   assert.match(html, /src="\.\/assets\//)
   assert.doesNotMatch(html, /(?:src|href)="\/assets\//)
   const assets = readdirSync(join(outDir, 'assets'))

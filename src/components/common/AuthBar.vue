@@ -53,7 +53,7 @@ const emit = defineEmits([
       <div class="auth-identity">
         <i class="auth-state-dot" :class="{ ready: authenticated }" aria-hidden="true" />
         <div>
-          <span>{{ authenticated ? `已连接 ${serviceName}` : '尚未登录' }}</span>
+          <span>{{ authenticated ? `已连接 ${serviceName}` : serviceName }}</span>
           <strong>{{ userLabel }}</strong>
         </div>
       </div>
@@ -110,7 +110,7 @@ const emit = defineEmits([
           </button>
         </form>
 
-        <div class="token-form">
+        <details class="alternative-login"><summary>使用 {{ credentialName }} 登录</summary><div class="token-form">
           <label>
             {{ credentialName }}
             <input
@@ -127,7 +127,7 @@ const emit = defineEmits([
             {{ loadingData ? '加载中' : `${credentialName} 登录` }}
           </button>
           <button :disabled="STATIC_PREVIEW" class="button-secondary" type="button" @click="emit('clear-token')">清空</button>
-        </div>
+        </div></details>
       </div>
     </details>
   </section>

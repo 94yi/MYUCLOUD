@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed } from 'vue'
 import AssignmentStatus from './AssignmentStatus.vue'
 
@@ -148,70 +148,16 @@ function getRelativeDeadline(assignment) {
       </div>
     </div>
 
-    <div v-if="loading" class="skeleton-list" :aria-label="loadingText">
-      <div v-for="index in 4" :key="index" class="skeleton-row">
-        <div>
-          <i class="skeleton-line" />
-          <i class="skeleton-line skeleton-line-short" />
-        </div>
-        <i class="skeleton-line skeleton-line-time" />
-      </div>
-    </div>
-    <section v-else-if="error" class="notice error">
-      {{ error }}
-    </section>
-    <div v-else-if="assignments.length === 0" class="empty-state empty-state-card">
-      <span class="empty-cloud" aria-hidden="true"><i /><i /></span>
-      <strong>{{ emptyText }}</strong>
-      <p>{{ includeCompleted ? '当前没有可显示的作业记录' : '新的待办作业会显示在这里' }}</p>
-    </div>
-
-    <div v-else class="deadline-groups">
-      <section v-for="group in assignmentGroups" :key="group.key" class="deadline-group">
-        <div class="deadline-group-header" :class="`group-${group.key}`">
-          <div>
-            <strong>{{ group.label }}</strong>
-            <span>{{ group.hint }}</span>
-          </div>
-          <small>{{ group.assignments.length }}</small>
-        </div>
-
-        <div class="deadline-list">
-          <button
-            v-for="assignment in group.assignments"
-            :key="assignment.id"
-            :aria-pressed="assignment.id === selectedAssignmentId"
-            class="deadline-item"
-            :class="[
-              `level-${assignment.level}`,
-              {
-                active: assignment.id === selectedAssignmentId,
-                loading: assignment.id === loadingAssignmentId,
-              },
-            ]"
-            type="button"
-            @click="emit('select', assignment)"
-          >
-            <div class="deadline-main">
-              <div class="deadline-title">
-                <strong>{{ assignment.title }}</strong>
-                <AssignmentStatus :level="assignment.level" :status="assignment.status" />
-              </div>
-              <p>
-                <span v-if="assignment.courseName">{{ assignment.courseName }}</span>
-                <span v-if="assignment.courseName && assignment.chapter"> · </span>
-                <span>{{ assignment.chapter }}</span>
-              </p>
-            </div>
-            <div class="deadline-time">
-              <span class="deadline-relative" :class="`level-${assignment.level}`">
-                {{ getRelativeDeadline(assignment) }}
-              </span>
-              <strong>{{ assignment.deadline || '未设置' }}</strong>
-              <small v-if="assignment.submitTime">提交 {{ assignment.submitTime }}</small>
-            </div>
-          </button>
-        </div>
+    <section v-if="error" class="notice error">{{ error }}</section>
+    <div v-else-if="loading" class="list-placeholder" role="status">{{ loadingText }}</div>
+    <div v-else-if="!assignments.length" class="list-placeholder"><strong>{{ emptyText }}</strong><p>已加载的作业会按截止时间排列。</p></div>
+    <div v-else class="assignment-feed">
+      <section v-for="group in assignmentGroups" :key="group.key" class="feed-group">
+        <h3 class="feed-group-title">{{ group.label }}<span>{{ group.assignments.length }}</span></h3>
+        <button v-for="assignment in group.assignments" :key="assignment.id" class="feed-assignment" :class="{ selected: assignment.id === selectedAssignmentId }" type="button" :disabled="assignment.id === loadingAssignmentId" @click="emit('select', assignment)">
+          <span class="feed-assignment-copy"><span class="feed-assignment-title">{{ assignment.title }}</span><span class="feed-assignment-meta">{{ assignment.courseName || '未标注课程' }}<span v-if="assignment.chapter"> · {{ assignment.chapter }}</span></span><span class="feed-assignment-date">截止 {{ assignment.deadline || '未设置' }}</span></span>
+          <span class="feed-assignment-state"><AssignmentStatus :level="assignment.level" :status="assignment.status" /><span class="feed-relative" :class="`level-${assignment.level}`">{{ assignment.id === loadingAssignmentId ? '读取中…' : getRelativeDeadline(assignment) }}</span></span>
+        </button>
       </section>
     </div>
   </section>

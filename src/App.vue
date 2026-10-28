@@ -38,7 +38,7 @@ import { buildFeedbackReport, collectKnownSecrets } from './utils/feedback-repor
 import { jwglSessionId } from './api/jwgl.js'
 
 const ASSIGNMENT_FETCH_SIZE = 9999
-const debugEnabled = import.meta.env.MODE !== 'pages' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
+const debugEnabled = import.meta.env.MODE !== 'pages' && import.meta.env.MODE !== 'snoval' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
 const DebugPanel = debugEnabled
   ? defineAsyncComponent(() => import('./components/common/DebugPanel.vue'))
   : null
@@ -1291,6 +1291,8 @@ onUnmounted(() => {
 
 <template>
   <AppShell
+    :user-label="userLabel"
+    :authenticated="Boolean(userInfo)"
     :active-view="activeView"
     :debug-enabled="debugEnabled"
     :plugins="plugins"
@@ -1316,9 +1318,8 @@ onUnmounted(() => {
         {{ studyError }}
       </section>
 
-      <section class="study-overview" aria-label="学习概览">
+      <section v-if="userInfo" class="study-overview" aria-label="学习概览">
         <div class="overview-heading">
-          <span>OVERVIEW</span>
           <strong>学习概览</strong>
         </div>
         <div class="metrics-grid">
@@ -1341,6 +1342,7 @@ onUnmounted(() => {
         </div>
       </section>
 
+      <div class="study-columns">
       <CourseGrid
         :courses="courses"
         :loading="loadingStudy"
@@ -1358,6 +1360,7 @@ onUnmounted(() => {
         :selected-assignment-id="selectedAssignmentId"
         @select="openAssignment"
       />
+      </div>
     </template>
 
     <template v-else-if="activeView === 'course'">
