@@ -522,25 +522,31 @@ summary:focus-visible {
   font-size: 12px;
 }
 .alternative-login {
-  margin-top: 16px;
+  margin-top: 20px;
 }
+/* styles.css 的 .auth-access summary 也会命中这个内层 summary，要撤掉它的最小高度和内边距 */
 .alternative-login > summary {
-  display: inline;
+  display: block;
+  width: fit-content;
+  min-height: 0;
   padding: 0;
-  color: #8995a6;
-  font-size: 11px;
+  color: var(--primary);
+  font-size: 12px;
   cursor: pointer;
+}
+.alternative-login > summary:hover {
+  text-decoration: underline;
 }
 .alternative-login > summary::after {
   display: none;
 }
 .alternative-login[open] > summary {
-  display: block;
   margin-bottom: 12px;
 }
+/* 与上方学号、密码、登录一行同宽：230 + 16 + 230 + 16 + 80 */
 .token-form {
-  max-width: 600px;
-  gap: 10px;
+  max-width: 572px;
+  gap: 16px;
 }
 .study-overview {
   display: block;
@@ -710,6 +716,7 @@ summary:focus-visible {
   }
   .token-form {
     grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
   }
   .token-form label {
     grid-column: 1 / -1;
