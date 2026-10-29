@@ -63,24 +63,6 @@ summary:focus-visible {
   color: var(--ink);
   flex-shrink: 0;
 }
-.app-brand strong {
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.5px;
-}
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 30px;
-  padding-bottom: 3px;
-  border-radius: 7px;
-  background: #355f91;
-  color: white;
-  font:
-    700 27px/1 Georgia,
-    serif;
-}
 .view-tabs {
   display: flex;
   align-self: stretch;

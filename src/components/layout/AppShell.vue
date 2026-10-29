@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import UcloudCreatures from '../common/UcloudCreatures.vue'
 import { PREVIEW_MESSAGE, STATIC_PREVIEW } from '../../utils/runtime.js'
 import { normalizeReportCoverUrl } from '../../utils/report-cover-url.js'
 
@@ -62,8 +63,7 @@ onUnmounted(() => {
     <button class="skip-link" type="button" @click="content?.focus()">跳转到内容</button>
     <header class="app-header">
       <a class="app-brand" href="#study">
-        <span class="brand-mark" aria-hidden="true">u</span>
-        <strong>MyUCloud</strong>
+        <UcloudCreatures />
       </a>
       <nav class="view-tabs" aria-label="页面">
         <button
