@@ -1,9 +1,9 @@
 const GROUPS = [
-  { key: 'overdue', label: '已截止未交' },
-  { key: 'upcoming', label: '近期' },
-  { key: 'later', label: '稍后' },
-  { key: 'missed', label: '往期未交' },
-  { key: 'completed', label: '已完成' },
+  { key: 'overdue', label: '已截止未交', hint: '打开详情可查看是否允许补交' },
+  { key: 'upcoming', label: '近期', hint: '七天内截止' },
+  { key: 'later', label: '稍后', hint: '时间相对充足' },
+  { key: 'missed', label: '往期未交', hint: '往学期截止且没有提交，仅供查看' },
+  { key: 'completed', label: '已完成', hint: '已经提交' },
 ]
 
 export function groupAssignments(assignments) {

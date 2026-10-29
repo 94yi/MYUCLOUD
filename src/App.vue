@@ -1331,11 +1331,11 @@ onUnmounted(() => {
             <span>待完成</span>
             <strong>{{ pendingAssignments.length }}</strong>
           </div>
-          <div class="metric-card metric-urgent">
+          <div class="metric-card metric-urgent" :class="{ 'has-value': urgentAssignments.length }">
             <span>临近截止</span>
             <strong>{{ urgentAssignments.length }}</strong>
           </div>
-          <div class="metric-card metric-overdue">
+          <div class="metric-card metric-overdue" :class="{ 'has-value': overdueAssignments.length }">
             <span>截止未交</span>
             <strong>{{ overdueAssignments.length }}</strong>
           </div>

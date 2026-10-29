@@ -105,9 +105,15 @@ const assignmentGroups = computed(() => groupAssignments(props.assignments))
       <p>已加载的作业会按截止时间排列。</p>
     </div>
     <div v-else class="assignment-feed">
-      <section v-for="group in assignmentGroups" :key="group.key" class="feed-group">
+      <section
+        v-for="group in assignmentGroups"
+        :key="group.key"
+        class="feed-group"
+        :class="`group-${group.key}`"
+      >
         <h3 class="feed-group-title">
           {{ group.label }}
+          <small>{{ group.hint }}</small>
           <span>{{ group.assignments.length }}</span>
         </h3>
         <button

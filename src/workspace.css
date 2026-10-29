@@ -3,7 +3,7 @@
   --bg: #f6f7f9;
   --border: #e4e7ec;
   --text-1: #252d39;
-  --text-2: #7c8491;
+  --text-2: #667085;
   --cloud-blue: var(--primary);
   --cloud-blue-strong: #244b79;
   --cloud-blue-soft: #f0f4f9;
@@ -211,12 +211,12 @@ summary:focus-visible {
 }
 .section-header p {
   margin-top: 5px;
-  font-size: 10px;
-  color: #9aa1ab;
+  font-size: 12px;
+  color: var(--muted);
 }
 .record-count {
-  color: #969eaa;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .course-register {
   margin: 0;
@@ -262,8 +262,8 @@ summary:focus-visible {
   overflow-wrap: anywhere;
 }
 .register-copy small {
-  color: #929aa6;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.7;
 }
@@ -298,22 +298,56 @@ summary:focus-visible {
 .assignment-feed {
   min-width: 0;
 }
+.feed-group {
+  --group-color: var(--primary);
+}
+.feed-group.group-overdue {
+  --group-color: var(--deadline-red);
+}
+.feed-group.group-upcoming {
+  --group-color: var(--warning);
+}
+.feed-group.group-missed {
+  --group-color: var(--muted);
+}
+.feed-group.group-completed {
+  --group-color: var(--success-green);
+}
 .feed-group + .feed-group {
-  margin-top: 20px;
+  margin-top: 24px;
 }
 .feed-group-title {
   display: flex;
   gap: 8px;
   align-items: center;
   margin: 0;
-  padding-bottom: 6px;
-  color: #8b94a1;
-  font-size: 11px;
+  padding-bottom: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.feed-group-title::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--group-color);
+  content: '';
+}
+.feed-group-title small {
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 400;
 }
 .feed-group-title > span {
-  color: #a8b0ba;
-  font-size: 10px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+/* 已截止和七天内截止的作业加左侧色条 */
+.feed-group:is(.group-overdue, .group-upcoming) .feed-assignment {
+  padding-left: 14px;
+  box-shadow: inset 2px 0 0 var(--group-color);
 }
 .feed-assignment {
   display: flex;
@@ -349,15 +383,16 @@ summary:focus-visible {
   overflow-wrap: anywhere;
 }
 .feed-assignment-meta {
-  color: #8a94a2;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.7;
 }
 .feed-assignment-date {
-  color: #a4abb5;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 .feed-assignment-state {
   display: grid;
@@ -367,31 +402,41 @@ summary:focus-visible {
   padding-top: 3px;
 }
 .feed-relative {
-  color: #8c95a2;
-  font-size: 10px;
-  font-weight: 400;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .feed-relative.level-danger,
 .feed-relative.level-overdue {
-  color: #b8685b;
+  color: var(--deadline-red);
+}
+.feed-relative.level-warning {
+  color: var(--warning);
+}
+.feed-relative.level-submitted {
+  color: var(--success-green);
+}
+.feed-relative.level-missed {
+  color: var(--muted);
 }
 .deadline-controls {
   gap: 12px;
   flex-wrap: wrap;
 }
 .deadline-controls .size-control {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
   gap: 6px;
 }
 .deadline-controls select {
   min-height: 28px;
   padding: 5px 23px 5px 7px;
-  font-size: 10px;
+  font-size: 12px;
   border-color: #e5e8ed;
 }
 .deadline-controls .toggle-control {
-  font-size: 10px;
+  font-size: 12px;
   gap: 6px;
   font-weight: 400;
 }
@@ -510,7 +555,7 @@ summary:focus-visible {
 }
 .metrics-grid {
   display: flex;
-  gap: 28px;
+  gap: 40px;
   flex-wrap: wrap;
 }
 .metric-card {
@@ -523,15 +568,20 @@ summary:focus-visible {
   border-radius: 0;
 }
 .metric-card span {
-  font-size: 12px;
-  color: #8c95a3;
+  font-size: 13px;
+  color: var(--muted);
 }
 .metric-card strong {
-  font-size: 17px;
-  font-weight: 500;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
 }
-.metric-card span::before,
-.metric-card + .metric-card::before {
+/* 临近截止、截止未交不为 0 时数字用对应颜色 */
+.metric-card.has-value strong {
+  color: var(--metric-accent);
+}
+.metric-card + .metric-card::before,
+.metrics-grid .metric-card::after {
   display: none;
 }
 .skip-link {
@@ -572,6 +622,8 @@ summary:focus-visible {
 @media (max-width: 768px) {
   .app-header {
     padding: 0 20px;
+    flex-direction: row;
+    align-items: center;
     flex-wrap: wrap;
     gap: 0;
   }
@@ -615,6 +667,10 @@ summary:focus-visible {
     grid-template-columns: minmax(0, 1fr);
     gap: 20px;
   }
+  /* 单栏时待办作业排在课程前面 */
+  .study-columns .course-section {
+    order: 1;
+  }
   .study-columns .section-header {
     flex-direction: row;
     align-items: center;
@@ -637,10 +693,17 @@ summary:focus-visible {
     grid-column: 1 / -1;
   }
   .metrics-grid {
-    gap: 16px 24px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
   }
-  .metric-card span {
-    font-size: 11px;
+  .metric-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .metric-card strong {
+    font-size: 22px;
   }
   .register-course {
     min-height: 80px;
