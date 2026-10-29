@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { computed } from 'vue'
 import AssignmentStatus from './AssignmentStatus.vue'
 import { groupAssignments, formatRelativeDeadline } from '../../utils/assignment-display.js'

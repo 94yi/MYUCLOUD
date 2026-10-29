@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { PREVIEW_MESSAGE, STATIC_PREVIEW } from '../../utils/runtime.js'
 import { normalizeReportCoverUrl } from '../../utils/report-cover-url.js'
@@ -43,6 +43,8 @@ let spacing
 let unmounted = false
 
 onMounted(async () => {
+  // 间距控制器是调界面用的工具，和调试页一样只在开发环境挂载
+  if (!props.debugEnabled) return
   const { mountSpacingControl } = await import('../../vendor/perrin/spacing-control.js')
   if (!unmounted) {
     spacing = mountSpacingControl({ root: shell.value, storageKey: 'myucloud-spacing-v1' })
