@@ -48,7 +48,7 @@ import { buildFeedbackReport, collectKnownSecrets } from './utils/feedback-repor
 import { jwglSessionId } from './api/jwgl.js'
 
 const ASSIGNMENT_FETCH_SIZE = 9999
-const debugEnabled = import.meta.env.MODE !== 'pages' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
+const debugEnabled = import.meta.env.MODE !== 'pages' && import.meta.env.MODE !== 'snoval' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
 const DebugPanel = debugEnabled
   ? defineAsyncComponent(() => import('./components/common/DebugPanel.vue'))
   : null

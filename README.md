@@ -2,7 +2,7 @@
 
 面向北邮 UCloud 的学习工具，集中查看课程资料、作业和课表。项目最初用于解决 Linux 下 Firefox 无法登录 UCloud 的问题。
 
-**在线使用：[u.aucept.in](https://u.aucept.in)**
+**Snoval 发布版：[snoval.link](https://snoval.link/)** · **上游站点：[u.aucept.in](https://u.aucept.in)**
 
 ## 功能
 
@@ -47,8 +47,8 @@ Windows PowerShell 如果禁止运行 `npm.ps1`，可将命令中的 `npm` 换�
 
 - **课程与作业**：登录 UCloud 后加载数据，点击课程或作业进入详情。Blade-Auth 登录位于登录区域的展开项中。
 - **课表**：顶部“课表”可独立打开，教务登录与 UCloud 登录分开。首次同步按周保存；重新同步失败不会清空已有缓存。
-- **间距设置**：右下角“间距”支持即时预览、保存、取消和恢复默认，只调整桌面布局，设置保存在当前浏览器。
-- **报告封面入口**：默认隐藏。若另有报告生成工具，可在 `.env.local` 中设置 `VITE_REPORT_COVER_URL=https://your-site.example/geport/` 后重启或重新构建。此仓库不包含报告工具或其部署配置。
+- **间距设置**：开发环境中的“间距”支持即时预览、保存、取消和恢复默认，只调整桌面布局；生产页面不挂载此调试工具。
+- **报告封面入口**：Snoval 发布版内置 [Geport](https://snoval.link/geport/)。普通构建可通过 `VITE_REPORT_COVER_URL` 配置入口。
 
 浏览器缓存按来源隔离，本机和在线站点不会共享登录状态、课表或界面设置。教务凭证过期或退出后，已缓存课表仍保留。更多说明见[课表与教务登录](docs/timetable.md)。
 
@@ -66,6 +66,8 @@ GitHub Pages 的前端地址为 `https://u.aucept.in`，默认后端为 `https:/
 Pages 域名、DNS、只读预览和跨域配置见[部署说明](docs/deployment.md)。本地预览、独立后端、Docker 和插件开发见[开发说明](docs/development.md)。
 
 ## 项目结构
+
+Snoval 的完整构建、验证、发布和回滚步骤见 [DEPLOY-SNOVAL.md](DEPLOY-SNOVAL.md)。`npm run build:snoval` 会同时构建主站和 `/geport/`，接口使用本站同源路径。
 
 ```text
 src/
