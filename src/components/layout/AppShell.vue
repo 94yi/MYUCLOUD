@@ -19,9 +19,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  agentCopyLabel: { type: String, default: '' },
 })
 
-const emit = defineEmits(['change-view', 'feedback'])
+const emit = defineEmits(['change-view', 'feedback', 'copy-agent'])
 const shell = ref(null)
 const content = ref(null)
 const reportCoverUrl = normalizeReportCoverUrl(import.meta.env.VITE_REPORT_COVER_URL)
@@ -32,12 +33,13 @@ const navigationItems = computed(() => [
   ...(props.debugEnabled ? [{ view: 'debug', name: '调试' }] : []),
 ])
 const activeNavigation = computed(() =>
-  ['course', 'assignment', 'survey'].includes(props.activeView) ? 'study' : props.activeView,
+  ['course', 'assignment', 'survey', 'quiz'].includes(props.activeView) ? 'study' : props.activeView,
 )
 const pageTitle = computed(() => {
   if (props.activeView === 'course') return '课程详情'
   if (props.activeView === 'assignment') return '作业详情'
   if (props.activeView === 'survey') return '问卷'
+  if (props.activeView === 'quiz') return '测验'
   return navigationItems.value.find((item) => item.view === props.activeView)?.name || '学习服务'
 })
 
@@ -79,6 +81,14 @@ onUnmounted(() => {
       </nav>
       <div class="header-tools">
         <a v-if="reportCoverUrl" :href="reportCoverUrl">报告封面</a>
+        <button
+          v-if="authenticated && !STATIC_PREVIEW"
+          type="button"
+          title="复制一段提示词，粘贴给 Claude Code 等 agent 后，它可以用命令行直接操作课程、作业、问卷和测验"
+          @click="emit('copy-agent')"
+        >
+          <span aria-live="polite">{{ agentCopyLabel || '复制给 Agent' }}</span>
+        </button>
         <button v-if="!STATIC_PREVIEW" type="button" @click="emit('feedback')">反馈</button>
         <span v-if="authenticated" class="system-account">{{ userLabel }}</span>
       </div>

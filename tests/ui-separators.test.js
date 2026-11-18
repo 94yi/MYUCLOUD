@@ -33,3 +33,20 @@ test('去除分隔点后，课程名、章节和附件元信息仍完整显示',
     for (const text of expected) assert.ok(html.includes(text), `${name}: ${text}`)
   }
 })
+
+test('测验保留站内入口、得分、选中与读取状态，不恢复分隔点', async (t) => {
+  const server = await createServer({ mode: 'snoval', logLevel: 'silent', server: { middlewareMode: true, hmr: false, watch: null } })
+  t.after(() => server.close())
+  const { default: DeadlineList } = await server.ssrLoadModule('/src/components/common/DeadlineList.vue')
+  const html = await renderToString(createSSRApp(DeadlineList, {
+    assignments: [{ id: 'quiz-1', kind: 'quiz', kindLabel: '测验', title: '章节测验', courseName: '计算机系统基础', chapter: '第一章', scoreText: '得分 95', isCompleted: true, level: 'submitted', status: '已提交', deadline: '2026-11-30 23:59' }],
+    selectedAssignmentId: 'quiz-1',
+    loadingAssignmentId: 'quiz-1',
+    pageSize: 35,
+  }))
+  assert.match(html, /<button[^>]*class="selected feed-assignment"[^>]*disabled[^>]*type="button"/)
+  assert.match(html, /<select value="35">/)
+  assert.match(html, /<option value="35">35 项<\/option>/)
+  for (const text of ['章节测验', '计算机系统基础', '第一章', '得分 95', '读取中…']) assert.ok(html.includes(text), text)
+  assert.doesNotMatch(html, /·|去 UCloud 作答|href=/)
+})
