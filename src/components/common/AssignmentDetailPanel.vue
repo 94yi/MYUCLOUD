@@ -195,7 +195,7 @@ function getResourceMeta(item) {
   const size = file.fileSizeUnit || file.size || file.fileSize || ''
   const mime = file.mimeType || file.contentType || ''
 
-  return [ext, size, mime].filter(Boolean).join(' · ')
+  return [ext, size, mime].filter(Boolean).join('　')
 }
 
 function joinUrl(domain, path) {
@@ -481,7 +481,7 @@ function submitAssignment() {
     <div class="section-header">
       <div>
         <h2>作业内容</h2>
-        <p>{{ assignment ? `${getAssignmentTitle(assignment, detail)} · ${getAssignmentChapter(assignment, detail)}` : '选择作业后显示详情' }}</p>
+        <p>{{ assignment ? `${getAssignmentTitle(assignment, detail)}　${getAssignmentChapter(assignment, detail)}` : '选择作业后显示详情' }}</p>
       </div>
       <span v-if="assignment" class="section-count">{{ resourceCount }} 个附件</span>
     </div>

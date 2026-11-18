@@ -176,7 +176,7 @@ function getCourseContextMeta(course) {
     course.departmentName || course.department || '',
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join('　')
 }
 
 function getViewFromHash() {
@@ -1528,7 +1528,7 @@ onUnmounted(() => {
           <span class="context-eyebrow">ASSIGNMENT</span>
           <h1>{{ selectedAssignment?.title || '作业详情' }}</h1>
           <p>
-            {{ [selectedAssignment?.courseName, selectedAssignment?.chapter].filter(Boolean).join(' · ') || '正在读取作业信息' }}
+            {{ [selectedAssignment?.courseName, selectedAssignment?.chapter].filter(Boolean).join('　') || '正在读取作业信息' }}
           </p>
         </div>
         <div class="detail-context-side">

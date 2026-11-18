@@ -158,14 +158,14 @@ function saveNote() {
           <button class="button-secondary" :disabled="selectedWeek === weeks.at(-1).week" type="button" @click="moveWeek(1)">下一周</button>
           <button v-if="currentTimetableWeek(weeks) !== undefined" class="button-secondary" type="button" @click="selectedWeek = currentTimetableWeek(weeks)">本周</button>
         </div>
-        <p>{{ cache.username }} · 本地课表 · 同步于 {{ savedAt }}</p>
+        <p>{{ cache.username }}　本地课表　同步于 {{ savedAt }}</p>
         <p v-if="missingWeeks.length && !busy">已保存 {{ weeks.length }} 周课表，尚有 {{ missingWeeks.length }} 周未同步。</p>
       </div>
       <p v-if="!current.courses.length" class="notice">第 {{ selectedWeek }} 周暂无课程。</p>
 
       <div class="timetable-scroll" tabindex="0" aria-label="每周课表，可横向滚动">
         <table class="timetable-grid">
-          <caption>第 {{ selectedWeek }} 周 · {{ current.days[0].date }} — {{ current.days[6].date }}</caption>
+          <caption>第 {{ selectedWeek }} 周　{{ current.days[0].date }} — {{ current.days[6].date }}</caption>
           <thead><tr>
             <th scope="col">节次</th>
             <th v-for="day in current.days" :key="day.label" scope="col">{{ day.label }}<small>{{ day.date }}</small></th>

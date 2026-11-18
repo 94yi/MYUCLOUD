@@ -91,7 +91,7 @@ function getNodeMeta(node) {
     Number(node.recommendLearnTime) > 0 ? `建议 ${node.recommendLearnTime}` : '',
   ].filter(Boolean)
 
-  return parts.join(' · ')
+  return parts.join('　')
 }
 
 function getAttachmentName(attachment) {
@@ -111,7 +111,7 @@ function getAttachmentMeta(attachment) {
   const ext = resource.ext || resource.fileType || ''
   const size = resource.fileSizeUnit || resource.size || ''
 
-  return [ext, size].filter(Boolean).join(' · ')
+  return [ext, size].filter(Boolean).join('　')
 }
 
 function isLinkAttachment(attachment) {
@@ -230,7 +230,7 @@ async function downloadAttachment(attachment) {
     <div class="section-header">
       <div>
         <h2>课程资料</h2>
-        <p>{{ course ? `按课程结构浏览 · ${getCourseName(course)}` : '选择课程后显示资料' }}</p>
+        <p>{{ course ? `按课程结构浏览　${getCourseName(course)}` : '选择课程后显示资料' }}</p>
       </div>
       <span v-if="course" class="section-count">{{ resourceCount }}</span>
     </div>

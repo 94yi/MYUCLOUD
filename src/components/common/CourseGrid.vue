@@ -61,7 +61,7 @@ function getTeacherNames(course) {
             <strong>{{ course.siteName || '未命名课程' }}</strong>
             <small>
               {{ getTeacherNames(course) }}
-              <span v-if="course.termName">· {{ course.termName }}</span>
+              <span v-if="course.termName">　{{ course.termName }}</span>
             </small>
           </span>
           <span class="register-arrow" aria-hidden="true">

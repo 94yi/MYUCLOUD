@@ -68,7 +68,7 @@ const subtitle = computed(() => {
     detail.value.endTime ? `截止 ${trimSeconds(detail.value.endTime)}` : '',
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join('　')
 })
 
 function isHtml(value) {

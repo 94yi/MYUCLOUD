@@ -423,7 +423,7 @@ function formatTime(value) {
                 <p v-if="selectedCall.response.body?.error?.code">
                   {{ selectedCall.response.body.error.code }}
                   <template v-if="selectedCall.response.body.error.hostname">
-                    · {{ selectedCall.response.body.error.hostname }}
+                   　{{ selectedCall.response.body.error.hostname }}
                   </template>
                 </p>
               </section>

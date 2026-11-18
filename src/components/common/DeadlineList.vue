@@ -155,8 +155,8 @@ function selectItem(assignment) {
             </span>
             <span class="feed-assignment-meta">
               {{ assignment.courseName || '未标注课程' }}
-              <span v-if="assignment.chapter">· {{ assignment.chapter }}</span>
-              <span v-if="isExternal(assignment)">· 去 UCloud 作答&nbsp;↗</span>
+              <span v-if="assignment.chapter">　{{ assignment.chapter }}</span>
+              <span v-if="isExternal(assignment)">　去 UCloud 作答&nbsp;↗</span>
             </span>
             <span class="feed-assignment-date">
               <template v-if="assignment.kind === 'quiz' && assignment.beginTime">{{ assignment.beginTime }} 开始，</template>
