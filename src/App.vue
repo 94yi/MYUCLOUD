@@ -130,7 +130,8 @@ let assignmentDetailRequestId = 0
 const todoItems = computed(() => sortAssignments([...assignments.value, ...activityTasks.value, ...peerReviewTasks.value]))
 // 往期未交（level missed）只在打开“显示已提交与往期”时列出，不计入待完成
 const pendingAssignments = computed(() =>
-  todoItems.value.filter((assignment) => !assignment.isCompleted && !assignment.isMissed),
+  todoItems.value.filter((assignment) => !assignment.isCompleted && !assignment.isMissed
+    && (assignment.kind !== 'peer-review' || assignment.pendingCount > 0)),
 )
 const urgentAssignments = computed(() =>
   pendingAssignments.value.filter((assignment) => assignment.level === 'danger' || assignment.level === 'warning'),
@@ -139,8 +140,7 @@ const overdueAssignments = computed(() =>
   pendingAssignments.value.filter((assignment) => assignment.level === 'overdue'),
 )
 const visibleAssignments = computed(() =>
-  todoItems.value
-    .filter((assignment) => includeCompleted.value || (!assignment.isCompleted && !assignment.isMissed))
+  (includeCompleted.value ? todoItems.value : pendingAssignments.value)
     .slice(0, Number(assignmentPageSize.value) || 20),
 )
 const userLabel = computed(

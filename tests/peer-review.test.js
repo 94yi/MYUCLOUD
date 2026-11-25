@@ -152,7 +152,7 @@ test('切换作业或账号清空互评，迟到的详情和旧账号 401 不能
 test('自己的作业已提交时，未评的互评仍是独立待办；全部评完才完成', () => {
   const assignment = { id: 'a1', title: 'Lab02', isCompleted: true, courseName: '云计算' }
   const detail = { assignmentMutualEvaluation: { evaluateEndTime: '2099-12-01 23:59:00' } }
-  const task = normalizePeerReviewTask(assignment, detail, [{ isEvaluated: 0 }, { isEvaluated: 1 }])
+  const task = normalizePeerReviewTask(assignment, detail, [{ isEvaluated: 0, canEnter: true }, { isEvaluated: 1 }])
   assert.equal(task.kind, 'peer-review')
   assert.equal(task.id, 'peer-review:a1')
   assert.equal(task.isCompleted, false)
@@ -210,4 +210,21 @@ test('一键互评名单变动必须重新确认；写请求失败不继续后�
   assert.equal(batch.stopped, 'r1')
   assert.equal(batch.uncertain, true)
   assert.deepEqual(batch.completed, [])
+})
+
+test('待评数只算现在可评的记录，无法评阅不等于已评完', () => {
+  const rows = [
+    { isEvaluated: 1, canEnter: true, score: 5 },
+    { isEvaluated: 0, canEnter: false, submitTime: '' },
+    { isEvaluated: 0, canEnter: true, submitTime: '' },
+    { isEvaluated: 2, canEnter: true, submitTime: '2026-11-21 12:00:00', attachmentCount: 0 },
+  ]
+  const count = (list, rules = {}) => normalizePeerReviewTask({ id: 'lab' }, { assignmentMutualEvaluation: rules }, list)
+  assert.equal(count(rows).pendingCount, 1)
+  const blocked = count(rows.slice(0, 3))
+  assert.equal(blocked.pendingCount, 0)
+  assert.equal(blocked.isCompleted, false)
+  assert.equal(blocked.status, '暂无可评作业')
+  assert.equal(count(rows, { evaluateStartTime: '2099-01-01' }).pendingCount, 0)
+  assert.equal(count(rows, { evaluateEndTime: '2000-01-01' }).pendingCount, 0)
 })
