@@ -1,6 +1,6 @@
 import { getAssignmentDetail, assertUcloudOk } from '../api/ucloud.js'
 import { getPeerReviews, getPeerReview, submitPeerReview } from '../api/peer-review.js'
-import { canReview, hasPeerReview, normalizePeerReviewTask, pendingReviewRows, reviewPayload } from '../utils/peer-review.js'
+import { canReview, hasPeerReview, normalizePeerReviewTask, actionableReviewRows, reviewPayload } from '../utils/peer-review.js'
 
 const defaultApi = { getPeerReviews, getPeerReview, submitPeerReview, getAssignmentDetail }
 function dataOf(call, label) { assertUcloudOk(call.result, label); return call.result.body?.data }
@@ -46,7 +46,7 @@ export async function loadPeerReviewTasks(token, assignments, { previous = [], a
 }
 
 export function batchReviewCandidates(rows, rules, now = Date.now()) {
-  return pendingReviewRows(rows).filter((row) => canReview(row, rules, now))
+  return actionableReviewRows(rows, rules, now)
 }
 
 // 只提交用户明确选定的统一评分；逐份回读确认，失败即停，不自动重试写请求。
