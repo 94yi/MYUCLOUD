@@ -99,6 +99,7 @@ const peerReviewEnabled = computed(() => hasPeerReview(selectedAssignment.value,
 watch([routeAssignmentId, bladeToken], () => { assignmentTab.value = 'detail'; assignmentPeerOpened.value = false; reviewBatchRequested.value = false }, { flush: 'sync' })
 const assignmentSubmitView = ref(null)
 const assignmentResources = ref([])
+const submittedResources = ref([])
 const assignmentDetailError = ref('')
 const assignmentSubmitError = ref('')
 const assignmentSubmitResult = ref(null)
@@ -313,6 +314,7 @@ function resetAssignmentDetail() {
   selectedAssignment.value = null
   assignmentDetail.value = null
   assignmentSubmitView.value = null
+  submittedResources.value = []
   assignmentResources.value = []
   assignmentDetailError.value = ''
   assignmentSubmitError.value = ''
@@ -376,8 +378,6 @@ function extractAssignmentDetailResources(body) {
     data.attachmentVOs,
     data.attachmentList,
     data.attachments,
-    data.submitAttachments,
-    data.submitAttachmentList,
     data.workAttachments,
     data.workAttachmentList,
     data.resources,
@@ -422,10 +422,10 @@ function getResourceIdentity(item) {
   )
 }
 
-function mergeAssignmentResources(resources) {
+function replaceSubmittedResources(resources) {
   const seen = new Set()
 
-  assignmentResources.value = [...assignmentResources.value, ...resources].filter((resource, index) => {
+  submittedResources.value = resources.filter((resource, index) => {
     const identity = getResourceIdentity(resource) || `fallback-${index}`
     if (seen.has(identity)) return false
 
@@ -982,6 +982,8 @@ async function loadAssignmentResourceDetails(rawResources, requestId) {
 }
 
 async function loadSubmitAttachmentResources(attachmentIds, requestId) {
+  if (requestId !== assignmentDetailRequestId) return
+  submittedResources.value = []
   if (attachmentIds.length === 0) return
 
   try {
@@ -999,7 +1001,7 @@ async function loadSubmitAttachmentResources(attachmentIds, requestId) {
 
     if (requestId !== assignmentDetailRequestId) return
 
-    mergeAssignmentResources(resources)
+    replaceSubmittedResources(resources)
   } catch (error) {
     logError('study:submit-attachment-resource:error', error)
   }
@@ -1011,6 +1013,7 @@ async function loadAssignmentResources(assignment) {
   selectedAssignment.value = assignment
   assignmentDetail.value = null
   assignmentSubmitView.value = null
+  submittedResources.value = []
   assignmentResources.value = []
   assignmentDetailError.value = ''
   assignmentSubmitError.value = ''
@@ -1685,6 +1688,7 @@ onUnmounted(() => {
           :error="assignmentDetailError"
           :loading="Boolean(loadingAssignmentId)"
           :resources="assignmentResources"
+          :submitted-resources="submittedResources"
           :submit-view="assignmentSubmitView"
           :submit-error="assignmentSubmitError"
           :submit-result="assignmentSubmitResult"
