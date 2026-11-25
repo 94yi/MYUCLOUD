@@ -19,6 +19,7 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  submittedResources: { type: Array, default: () => [] },
   resources: {
     type: Array,
     default: () => [],
@@ -54,7 +55,10 @@ const emit = defineEmits(['submit'])
 const fileInput = ref(null)
 const pickedFiles = ref([])
 const assignmentContent = ref('')
-const resourceCount = computed(() => props.resources.length)
+const attachmentGroups = computed(() => [
+  { title: '老师发的附件', files: props.resources, empty: '老师没有附文件' },
+  { title: '我提交的附件', files: props.submittedResources, empty: '没有已提交的附件' },
+])
 const attachmentError = ref('')
 const previewingId = ref('')
 const videoPreview = ref(null)
@@ -481,7 +485,6 @@ function submitAssignment() {
         <h2>作业内容</h2>
         <p>{{ assignment ? `${getAssignmentTitle(assignment, detail)}　${getAssignmentChapter(assignment, detail)}` : '选择作业后显示详情' }}</p>
       </div>
-      <span v-if="assignment" class="section-count">{{ resourceCount }} 个附件</span>
     </div>
 
     <div v-if="!assignment" class="empty-state empty-state-card">
@@ -544,22 +547,16 @@ function submitAssignment() {
         </div>
       </div>
 
-      <section class="assignment-resources">
+      <section v-for="group in attachmentGroups" :key="group.title" class="assignment-resources">
         <div class="subsection-header">
           <div>
-            <strong>作业附件</strong>
-            <span>{{ resources.length ? `共 ${resources.length} 项` : '教师暂未添加附件' }}</span>
+            <strong>{{ group.title }}</strong>
+            <span>{{ group.files.length ? `共 ${group.files.length} 项` : group.empty }}</span>
           </div>
         </div>
 
-        <div v-if="resources.length === 0" class="empty-state empty-state-card compact">
-          <span class="empty-cloud" aria-hidden="true"><i /><i /></span>
-          <strong>暂无作业附件</strong>
-          <p>本次作业没有需要下载的资源</p>
-        </div>
-
-        <div v-else class="attachment-list">
-          <div v-for="(resource, index) in resources" :key="resource.id || index" class="attachment-row">
+        <div v-if="group.files.length" class="attachment-list">
+          <div v-for="(resource, index) in group.files" :key="resource.id || index" class="attachment-row">
             <div class="attachment-main">
               <a
                 v-if="getResourceUrl(resource)"
