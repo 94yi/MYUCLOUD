@@ -1,9 +1,10 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import SafeReviewContent from './SafeReviewContent.vue'
 import VideoPreview from './VideoPreview.vue'
 import { fetchBackend, friendlyError, responseErrorMessage } from '../../api/http.js'
 import { assertUcloudOk } from '../../api/ucloud.js'
-import { parseBeijingTime } from '../../utils/deadline.js'
+import { isSubmitViewSubmitted, parseBeijingTime } from '../../utils/deadline.js'
 import { BUSINESS_AUTH, TENANT_ID, TOKEN_KEY, buildPreviewUrl, buildFileUrl, isVideoResource, getResourcePreviewUrl, pickPreviewData } from '../../api/ucloud'
 
 const props = defineProps({
@@ -55,10 +56,12 @@ const emit = defineEmits(['submit'])
 const fileInput = ref(null)
 const pickedFiles = ref([])
 const assignmentContent = ref('')
-const attachmentGroups = computed(() => [
-  { title: '老师发的附件', files: props.resources, empty: '老师没有附文件' },
-  { title: '我提交的附件', files: props.submittedResources, empty: '没有已提交的附件' },
+const sections = computed(() => [
+  { key: 'requirements', title: '作业要求', files: props.resources },
+  { key: 'submission', title: '作业', files: props.submittedResources },
 ])
+const submittedContent = computed(() => isSubmitViewSubmitted(props.submitView)
+  ? String(props.submitView?.assignmentContent ?? '').trim() : '')
 const attachmentError = ref('')
 const previewingId = ref('')
 const videoPreview = ref(null)
@@ -482,7 +485,7 @@ function submitAssignment() {
     <p v-if="attachmentError" class="notice error" role="alert">{{ attachmentError }}</p>
     <div class="section-header">
       <div>
-        <h2>作业内容</h2>
+        <h2>作业详情</h2>
         <p>{{ assignment ? `${getAssignmentTitle(assignment, detail)}　${getAssignmentChapter(assignment, detail)}` : '选择作业后显示详情' }}</p>
       </div>
     </div>
@@ -531,7 +534,11 @@ function submitAssignment() {
           </div>
         </div>
 
-        <div class="assignment-summary-main">
+      </div>
+
+      <section v-for="group in sections" :key="group.key" class="assignment-part" :aria-label="group.title">
+        <h3>{{ group.title }}</h3>
+        <div v-if="group.key === 'requirements'" class="assignment-summary-main">
           <div
             v-if="formatAssignmentContent(assignment, detail) && shouldRenderAssignmentContentHtml(assignment, detail)"
             class="assignment-content-box"
@@ -545,15 +552,10 @@ function submitAssignment() {
             {{ getAssignmentDescription(assignment, detail) }}
           </p>
         </div>
-      </div>
-
-      <section v-for="group in attachmentGroups" :key="group.title" class="assignment-resources">
-        <div class="subsection-header">
-          <div>
-            <strong>{{ group.title }}</strong>
-            <span>{{ group.files.length ? `共 ${group.files.length} 项` : group.empty }}</span>
-          </div>
-        </div>
+        <SafeReviewContent v-else-if="submittedContent" :content="submittedContent" />
+        <p v-else-if="!group.files.length" class="assignment-part-empty">
+          {{ !submitView ? '未读取到提交记录' : isSubmitViewSubmitted(submitView) ? '本次提交没有正文或附件' : '尚未提交作业' }}
+        </p>
 
         <div v-if="group.files.length" class="attachment-list">
           <div v-for="(resource, index) in group.files" :key="resource.id || index" class="attachment-row">
@@ -685,3 +687,11 @@ function submitAssignment() {
     </template>
   </section>
 </template>
+
+
+<style scoped>
+.assignment-part { display: grid; gap: 12px; min-width: 0; margin-top: 1.25rem; }
+.assignment-part + .assignment-part { border-top: 1px solid var(--line, #d9dfe6); padding-top: 1.25rem; }
+.assignment-part > h3 { margin: 0; font-size: 1.1rem; }
+.assignment-part-empty { margin: 0; }
+</style>

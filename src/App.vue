@@ -1372,6 +1372,7 @@ async function submitSelectedAssignment({ assignment, content, files = [] }) {
     if (controller.signal.aborted) return
 
     if (confirmation.confirmed) {
+      assignmentSubmitView.value = confirmation.body?.data ?? confirmation.body
       for (const file of files) uploadedAttachmentCache.delete(getAttachmentCacheKey(assignmentId, file))
       const submitTime = pickSubmitTime(confirmation.body) || pickSubmitTime(submitCall.result.body) || ''
       assignmentSubmitResult.value = {
