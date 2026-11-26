@@ -17,9 +17,11 @@ test('课表解析保留地点和节次，合并重复连堂课', () => {
   assert.equal(week.courses[0].location, '测试楼-101')
   assert.deepEqual([week.courses[0].day, week.courses[0].start, week.courses[0].end], [1, 1, 2])
   assert.equal(week.days.length, 7)
-  assert.equal(currentTimetableWeek([week], new Date(2026, 8, 7)), 1)
-  assert.equal(currentTimetableWeek([week], new Date(2026, 8, 13)), 1)
-  assert.equal(currentTimetableWeek([week], new Date(2026, 8, 14)), undefined)
+  // “今天”按北京时间算，和设备时区无关
+  assert.equal(currentTimetableWeek([week], new Date('2026-09-07T00:00:00+08:00')), 1)
+  assert.equal(currentTimetableWeek([week], new Date('2026-09-13T23:59:00+08:00')), 1)
+  assert.equal(currentTimetableWeek([week], new Date('2026-09-14T00:00:00+08:00')), undefined)
+  assert.equal(currentTimetableWeek([week], new Date('2026-09-06T16:30:00Z')), 1)
 })
 
 test('接受空课表和第0周，拒绝登录页和不完整课表', () => {
@@ -49,7 +51,8 @@ test('服务端凭证可在重启后恢复，支持过期和撤销', (t) => {
   const store = new JwglSessionStore(file)
   store.set('token', { username: 'student', cookies: 'route=test; JSESSIONID=test', expiresAt: Date.now() + 60000 })
   assert.equal(new JwglSessionStore(file).get('token').username, 'student')
-  assert.equal(statSync(file).mode & 0o777, 0o600)
+  // Windows uses ACLs and does not implement POSIX permission bits.
+  if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600)
   store.set('expired', { username: 'student', cookies: '', expiresAt: 1 })
   assert.equal(store.get('expired'), undefined)
   store.delete('token')

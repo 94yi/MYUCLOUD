@@ -1,8 +1,10 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import SafeReviewContent from './SafeReviewContent.vue'
 import VideoPreview from './VideoPreview.vue'
 import { fetchBackend, friendlyError, responseErrorMessage } from '../../api/http.js'
 import { assertUcloudOk } from '../../api/ucloud.js'
+import { isSubmitViewSubmitted, parseBeijingTime } from '../../utils/deadline.js'
 import { BUSINESS_AUTH, TENANT_ID, TOKEN_KEY, buildPreviewUrl, buildFileUrl, isVideoResource, getResourcePreviewUrl, pickPreviewData } from '../../api/ucloud'
 
 const props = defineProps({
@@ -18,6 +20,7 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  submittedResources: { type: Array, default: () => [] },
   resources: {
     type: Array,
     default: () => [],
@@ -42,6 +45,10 @@ const props = defineProps({
     type: [Object, String],
     default: null,
   },
+  uploadProgress: {
+    type: Object,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['submit'])
@@ -49,16 +56,24 @@ const emit = defineEmits(['submit'])
 const fileInput = ref(null)
 const pickedFiles = ref([])
 const assignmentContent = ref('')
-const resourceCount = computed(() => props.resources.length)
+const sections = computed(() => [
+  { key: 'requirements', title: '作业要求', files: props.resources },
+  { key: 'submission', title: '作业', files: props.submittedResources },
+])
+const submittedContent = computed(() => isSubmitViewSubmitted(props.submitView)
+  ? String(props.submitView?.assignmentContent ?? '').trim() : '')
 const attachmentError = ref('')
 const previewingId = ref('')
 const videoPreview = ref(null)
 const downloadingId = ref('')
+const dragDepth = ref(0)
+const dragActive = computed(() => dragDepth.value > 0)
 
 watch(
   () => props.assignment?.id,
   () => {
     assignmentContent.value = ''
+    dragDepth.value = 0
     clearPickedFiles()
   },
 )
@@ -187,7 +202,7 @@ function getResourceMeta(item) {
   const size = file.fileSizeUnit || file.size || file.fileSize || ''
   const mime = file.mimeType || file.contentType || ''
 
-  return [ext, size, mime].filter(Boolean).join(' · ')
+  return [ext, size, mime].filter(Boolean).join('　')
 }
 
 function joinUrl(domain, path) {
@@ -355,8 +370,57 @@ function formatFileSize(size) {
   return `${(size / 1024 / 1024).toFixed(1)}MB`
 }
 
+function fileKey(file) {
+  return `${file.name}-${file.size}-${file.lastModified}`
+}
+
+function addPickedFiles(files) {
+  const known = new Set(pickedFiles.value.map(fileKey))
+  const added = []
+  for (const file of files || []) {
+    const key = fileKey(file)
+    if (known.has(key)) continue
+    known.add(key)
+    added.push(file)
+  }
+  if (added.length > 0) {
+    pickedFiles.value = [...pickedFiles.value, ...added]
+  }
+}
+
 function updatePickedFiles(event) {
-  pickedFiles.value = Array.from(event.target.files || [])
+  addPickedFiles(event.target.files)
+  event.target.value = ''
+}
+
+function removePickedFile(file) {
+  pickedFiles.value = pickedFiles.value.filter((item) => item !== file)
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files')
+}
+
+function onDragEnter(event) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value += 1
+}
+
+function onDragOver(event) {
+  if (!hasDraggedFiles(event)) return
+  event.dataTransfer.dropEffect = props.submitting ? 'none' : 'copy'
+}
+
+function onDragLeave(event) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+}
+
+function onDrop(event) {
+  dragDepth.value = 0
+  if (!props.submitting) {
+    addPickedFiles(event.dataTransfer?.files)
+  }
 }
 
 function clearPickedFiles() {
@@ -365,6 +429,40 @@ function clearPickedFiles() {
     fileInput.value.value = ''
   }
 }
+
+// 学校后端不校验 isOvertimeCommit，截止后照样接受提交，所以前端不再拦，截止后只提示会记为补交
+const isPastDeadline = computed(() => {
+  const deadline = parseBeijingTime(getAssignmentDeadline(props.assignment, props.detail))
+  return deadline !== null && deadline < Date.now()
+})
+
+const LARGE_UPLOAD_BYTES = 20 * 1024 * 1024
+
+const pickedTotalSize = computed(() => pickedFiles.value.reduce((sum, file) => sum + (file.size || 0), 0))
+
+const uploadProgressText = computed(() => {
+  const progress = props.uploadProgress
+  if (!progress) return ''
+
+  const prefix = progress.count > 1 ? `附件 ${progress.index}/${progress.count}「${progress.name}」` : `附件「${progress.name}」`
+  const retry = progress.attempt > 1 ? '（网络中断，正在重试）' : ''
+  if (progress.sent) return `${prefix}已发送，等待学校服务器处理…${retry}`
+
+  const total = progress.total || progress.size || 0
+  const percent = total ? Math.floor((progress.loaded / total) * 100) : 0
+  const seconds = (progress.elapsedMs || 0) / 1000
+  const speed = seconds > 1 ? `，${formatFileSize(progress.loaded / seconds)}/s` : ''
+
+  return `正在上传${prefix} ${percent}%（${formatFileSize(progress.loaded)} / ${formatFileSize(total)}${speed}）${retry}`
+})
+
+const uploadPercent = computed(() => {
+  const progress = props.uploadProgress
+  if (!progress) return 0
+  if (progress.sent) return 100
+  const total = progress.total || progress.size || 0
+  return total ? Math.min(100, Math.floor((progress.loaded / total) * 100)) : 0
+})
 
 function submitAssignment() {
   emit('submit', {
@@ -387,10 +485,9 @@ function submitAssignment() {
     <p v-if="attachmentError" class="notice error" role="alert">{{ attachmentError }}</p>
     <div class="section-header">
       <div>
-        <h2>作业内容</h2>
-        <p>{{ assignment ? `${getAssignmentTitle(assignment, detail)} · ${getAssignmentChapter(assignment, detail)}` : '选择作业后显示详情' }}</p>
+        <h2>作业详情</h2>
+        <p>{{ assignment ? `${getAssignmentTitle(assignment, detail)}　${getAssignmentChapter(assignment, detail)}` : '选择作业后显示详情' }}</p>
       </div>
-      <span v-if="assignment" class="section-count">{{ resourceCount }} 个附件</span>
     </div>
 
     <div v-if="!assignment" class="empty-state empty-state-card">
@@ -437,7 +534,11 @@ function submitAssignment() {
           </div>
         </div>
 
-        <div class="assignment-summary-main">
+      </div>
+
+      <section v-for="group in sections" :key="group.key" class="assignment-part" :aria-label="group.title">
+        <h3>{{ group.title }}</h3>
+        <div v-if="group.key === 'requirements'" class="assignment-summary-main">
           <div
             v-if="formatAssignmentContent(assignment, detail) && shouldRenderAssignmentContentHtml(assignment, detail)"
             class="assignment-content-box"
@@ -450,83 +551,14 @@ function submitAssignment() {
           <p v-if="getAssignmentDescription(assignment, detail)">
             {{ getAssignmentDescription(assignment, detail) }}
           </p>
-          <div
-            v-if="hasCommentText(getAssignmentComment(assignment, detail, submitView))"
-            class="assignment-comment-box"
-          >
-            <span class="assignment-comment-label">教师评语</span>
-            {{ getAssignmentComment(assignment, detail, submitView) }}
-          </div>
         </div>
-      </div>
+        <SafeReviewContent v-else-if="submittedContent" :content="submittedContent" />
+        <p v-else-if="!group.files.length" class="assignment-part-empty">
+          {{ !submitView ? '未读取到提交记录' : isSubmitViewSubmitted(submitView) ? '本次提交没有正文或附件' : '尚未提交作业' }}
+        </p>
 
-      <form class="assignment-submit-box" @submit.prevent="submitAssignment">
-        <div class="subsection-header">
-          <div>
-            <strong>提交作业</strong>
-            <span>填写内容或添加附件后提交</span>
-          </div>
-        </div>
-
-        <label class="submit-content">
-          提交内容
-          <textarea
-            v-model="assignmentContent"
-            placeholder="输入本次作业提交内容"
-            spellcheck="false"
-          />
-        </label>
-
-        <div class="submit-actions">
-          <label class="file-picker">
-            <input ref="fileInput" multiple type="file" @change="updatePickedFiles" />
-            <span>选择文件</span>
-          </label>
-          <button :disabled="submitting" type="submit">
-            {{ submitting ? '提交中' : '提交' }}
-          </button>
-          <button
-            v-if="pickedFiles.length > 0"
-            class="button-secondary"
-            type="button"
-            @click="clearPickedFiles"
-          >
-            清空
-          </button>
-        </div>
-
-        <div v-if="pickedFiles.length > 0" class="picked-file-list">
-          <div v-for="file in pickedFiles" :key="`${file.name}-${file.lastModified}`" class="picked-file-row">
-            <strong>{{ file.name }}</strong>
-            <span>{{ formatFileSize(file.size) }}</span>
-          </div>
-        </div>
-        <div v-else class="empty-state">未选择文件</div>
-
-        <section v-if="submitError" class="notice error">
-          {{ submitError }}
-        </section>
-        <section v-else-if="submitResult" class="notice success">
-          提交请求已完成
-        </section>
-      </form>
-
-      <section class="assignment-resources">
-        <div class="subsection-header">
-          <div>
-            <strong>作业附件</strong>
-            <span>{{ resources.length ? `共 ${resources.length} 项` : '教师暂未添加附件' }}</span>
-          </div>
-        </div>
-
-        <div v-if="resources.length === 0" class="empty-state empty-state-card compact">
-          <span class="empty-cloud" aria-hidden="true"><i /><i /></span>
-          <strong>暂无作业附件</strong>
-          <p>本次作业没有需要下载的资源</p>
-        </div>
-
-        <div v-else class="attachment-list">
-          <div v-for="(resource, index) in resources" :key="resource.id || index" class="attachment-row">
+        <div v-if="group.files.length" class="attachment-list">
+          <div v-for="(resource, index) in group.files" :key="resource.id || index" class="attachment-row">
             <div class="attachment-main">
               <a
                 v-if="getResourceUrl(resource)"
@@ -551,6 +583,115 @@ function submitAssignment() {
           </div>
         </div>
       </section>
+
+      <div
+        v-if="hasCommentText(getAssignmentComment(assignment, detail, submitView))"
+        class="assignment-comment-box"
+      >
+        <span class="assignment-comment-label">教师评语</span>
+        {{ getAssignmentComment(assignment, detail, submitView) }}
+      </div>
+
+      <form
+        class="assignment-submit-box"
+        :class="{ 'drag-active': dragActive }"
+        @submit.prevent="submitAssignment"
+        @dragenter.prevent="onDragEnter"
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+      >
+        <div class="subsection-header">
+          <div>
+            <strong>{{ isPastDeadline ? '补交作业' : '提交作业' }}</strong>
+            <span v-if="isPastDeadline">已过截止时间，提交后会记为补交</span>
+            <span v-else>填写内容或添加附件后提交，可直接把文件拖到这里</span>
+          </div>
+        </div>
+
+        <label class="submit-content">
+          提交内容
+          <textarea
+            v-model="assignmentContent"
+            placeholder="输入本次作业提交内容"
+            spellcheck="false"
+          />
+        </label>
+
+        <div v-if="pickedFiles.length > 0" class="picked-file-list">
+          <div v-for="file in pickedFiles" :key="fileKey(file)" class="picked-file-row">
+            <strong>{{ file.name }}</strong>
+            <span>{{ formatFileSize(file.size) }}</span>
+            <button
+              :disabled="submitting"
+              class="picked-file-remove"
+              title="移除"
+              type="button"
+              @click="removePickedFile(file)"
+            >×</button>
+          </div>
+        </div>
+        <button
+          v-else
+          :disabled="submitting"
+          class="file-drop-zone"
+          type="button"
+          @click="fileInput?.click()"
+        >
+          <strong>拖拽文件到此处</strong>
+          <span>或点击选择文件，支持多个</span>
+        </button>
+
+        <div v-if="dragActive" class="drop-overlay" aria-hidden="true">
+          <strong>松开即可添加附件</strong>
+        </div>
+
+        <p v-if="pickedTotalSize >= LARGE_UPLOAD_BYTES && !submitting" class="upload-hint">
+          附件共 {{ formatFileSize(pickedTotalSize) }}，网络较慢时可能需要几分钟，上传期间请不要离开此页面。
+        </p>
+
+        <section v-if="submitting && uploadProgress" class="upload-progress" aria-live="polite">
+          <div class="upload-progress-bar"><span :style="{ width: `${uploadPercent}%` }" /></div>
+          <span>{{ uploadProgressText }}</span>
+        </section>
+
+        <div class="submit-actions assignment-submit-actions">
+          <label class="file-picker">
+            <input ref="fileInput" multiple type="file" @change="updatePickedFiles" />
+            <span>选择文件</span>
+          </label>
+          <button
+            v-if="pickedFiles.length > 0"
+            class="button-secondary"
+            type="button"
+            @click="clearPickedFiles"
+          >
+            清空
+          </button>
+          <button :disabled="submitting" type="submit">
+            {{ submitting ? '提交中' : '提交' }}
+          </button>
+        </div>
+
+        <section v-if="submitError" class="notice error">
+          {{ submitError }}
+          <template v-if="pickedFiles.length > 0">已上传成功的附件再次提交时不会重复上传。</template>
+        </section>
+        <section v-else-if="submitResult?.confirmed" class="notice success">
+          学校已确认收到提交{{ submitResult.submitTime ? `（${submitResult.submitTime}）` : '' }}{{ submitResult.attachmentCount ? `，附件 ${submitResult.attachmentCount} 个` : '' }}。
+        </section>
+        <section v-else-if="submitResult" class="notice warning">
+          提交请求已发出，但暂未在学校查到提交记录。请稍后刷新作业列表确认，必要时在企业微信云邮中核对。
+        </section>
+      </form>
     </template>
   </section>
 </template>
+
+
+<style scoped>
+.assignment-part { display: grid; gap: 12px; min-width: 0; margin-top: 1.25rem; }
+.assignment-part + .assignment-part { border-top: 1px solid var(--line, #d9dfe6); padding-top: 1.25rem; }
+.assignment-part > h3 { margin: 0; font-size: 1.1rem; }
+.assignment-part-empty { margin: 0; }
+</style>

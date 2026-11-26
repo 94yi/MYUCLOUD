@@ -1,12 +1,13 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { STATIC_PREVIEW } from './utils/runtime.js'
+import { BACKEND_ORIGIN, STATIC_PREVIEW } from './utils/runtime.js'
 import { responseErrorMessage } from './api/http.js'
 import {
   BUSINESS_AUTH,
   DEFAULT_DEBUG_URL,
   DEFAULT_LOGIN_URL,
   TENANT_ID,
+  REFRESH_TOKEN_KEY,
   TOKEN_KEY,
   assertUcloudOk,
   isTokenExpired,
@@ -17,6 +18,8 @@ import {
   getCourseResources,
   getResourcesById,
   getStudentCourses,
+  getTodoSurveys,
+  getQuizzes,
   getUserInfo,
   loginWithCredentials,
   pickToken,
@@ -30,12 +33,28 @@ import AssignmentDetailPanel from './components/common/AssignmentDetailPanel.vue
 import CourseGrid from './components/common/CourseGrid.vue'
 import CourseResourcePanel from './components/common/CourseResourcePanel.vue'
 import DeadlineList from './components/common/DeadlineList.vue'
+import SurveyPanel from './components/common/SurveyPanel.vue'
+import QuizPanel from './components/common/QuizPanel.vue'
+import PeerReviewPanel from './components/common/PeerReviewPanel.vue'
+import { hasPeerReview } from './utils/peer-review.js'
+import { loadPeerReviewTasks } from './services/peer-review.js'
 import AppShell from './components/layout/AppShell.vue'
 import { usePlugins } from './plugin/index.js'
-import { normalizeAssignment, sortAssignments } from './utils/deadline'
+import {
+  formatBeijingTime,
+  isSubmitViewSubmitted,
+  normalizeAssignment,
+  normalizeQuiz,
+  normalizeSurvey,
+  sortAssignments,
+} from './utils/deadline'
+import FeedbackDialog from './components/common/FeedbackDialog.vue'
+import { buildFeedbackReport, collectKnownSecrets } from './utils/feedback-report.js'
+import { jwglSessionId } from './api/jwgl.js'
+import { buildAgentPrompt } from './utils/agent-prompt.js'
 
 const ASSIGNMENT_FETCH_SIZE = 9999
-const debugEnabled = import.meta.env.MODE !== 'pages' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
+const debugEnabled = import.meta.env.MODE !== 'pages' && import.meta.env.MODE !== 'snoval' && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEBUG === 'true')
 const DebugPanel = debugEnabled
   ? defineAsyncComponent(() => import('./components/common/DebugPanel.vue'))
   : null
@@ -44,12 +63,16 @@ const TimetablePage = defineAsyncComponent(() => import('./components/common/Tim
 const activeView = ref(getViewFromHash())
 const routeCourseId = ref(getRouteCourseId())
 const routeAssignmentId = ref(getRouteAssignmentId())
+const routeSurveyId = ref(getRouteSurveyId())
+const routeQuizId = ref(getRouteQuizId())
 const plugins = usePlugins()
 const pluginViews = computed(() => new Set(plugins.map((p) => p.view)))
 const username = ref('')
 const password = ref('')
 const loginUrl = ref(DEFAULT_LOGIN_URL)
 const bladeToken = ref(STATIC_PREVIEW ? '' : localStorage.getItem(TOKEN_KEY) || '')
+const refreshToken = ref(STATIC_PREVIEW ? '' : localStorage.getItem(REFRESH_TOKEN_KEY) || '')
+const agentCopyLabel = ref('')
 const apiUrl = ref(DEFAULT_DEBUG_URL)
 const logs = ref([])
 const loggingIn = ref(false)
@@ -69,13 +92,34 @@ const courseAssignments = ref([])
 const courseAssignmentError = ref('')
 const selectedAssignment = ref(null)
 const assignmentDetail = ref(null)
+const assignmentTab = ref('detail')
+const assignmentPeerOpened = ref(false)
+const reviewBatchRequested = ref(false)
+const peerReviewEnabled = computed(() => hasPeerReview(selectedAssignment.value, assignmentDetail.value))
+watch([routeAssignmentId, bladeToken], () => { assignmentTab.value = 'detail'; assignmentPeerOpened.value = false; reviewBatchRequested.value = false }, { flush: 'sync' })
 const assignmentSubmitView = ref(null)
 const assignmentResources = ref([])
+const submittedResources = ref([])
 const assignmentDetailError = ref('')
 const assignmentSubmitError = ref('')
 const assignmentSubmitResult = ref(null)
 const submittingAssignment = ref(false)
+const uploadProgress = ref(null)
+// 已上传成功的附件按 作业+文件 记住 id，重试提交时不必重新上传大文件
+const uploadedAttachmentCache = new Map()
+let submitController = null
 const assignments = ref([])
+// 待填的问卷和待做的测验，和作业一起排进首页待办
+const activityTasks = ref([])
+const peerReviewTasks = ref([])
+const peerTodoWarning = ref('')
+let peerTodoRequest = 0
+// 当前作答的问卷；提交后会从待办移除，这里保留标题等信息给页头用
+const selectedSurvey = ref(null)
+const surveyTitle = ref('')
+// 当前作答的测验，交卷后从待办移除
+const selectedQuiz = ref(null)
+const quizTitle = ref('')
 const includeCompleted = ref(false)
 const assignmentPageSize = ref(20)
 const lastLoadedAt = ref('')
@@ -83,8 +127,11 @@ let courseResourceRequestId = 0
 let courseAssignmentRequestId = 0
 let assignmentDetailRequestId = 0
 
+const todoItems = computed(() => sortAssignments([...assignments.value, ...activityTasks.value, ...peerReviewTasks.value]))
+// 往期未交（level missed）只在打开“显示已提交与往期”时列出，不计入待完成
 const pendingAssignments = computed(() =>
-  assignments.value.filter((assignment) => !assignment.isCompleted),
+  todoItems.value.filter((assignment) => !assignment.isCompleted && !assignment.isMissed
+    && (assignment.kind !== 'peer-review' || assignment.pendingCount > 0)),
 )
 const urgentAssignments = computed(() =>
   pendingAssignments.value.filter((assignment) => assignment.level === 'danger' || assignment.level === 'warning'),
@@ -93,8 +140,7 @@ const overdueAssignments = computed(() =>
   pendingAssignments.value.filter((assignment) => assignment.level === 'overdue'),
 )
 const visibleAssignments = computed(() =>
-  assignments.value
-    .filter((assignment) => includeCompleted.value || !assignment.isCompleted)
+  (includeCompleted.value ? todoItems.value : pendingAssignments.value)
     .slice(0, Number(assignmentPageSize.value) || 20),
 )
 const userLabel = computed(
@@ -151,7 +197,7 @@ function getCourseContextMeta(course) {
     course.departmentName || course.department || '',
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join('　')
 }
 
 function getViewFromHash() {
@@ -159,6 +205,8 @@ function getViewFromHash() {
   if (hash === '#debug') return debugEnabled ? 'debug' : 'study'
   if (hash.startsWith('#course/')) return 'course'
   if (hash.startsWith('#assignment/')) return 'assignment'
+  if (hash.startsWith('#survey/')) return 'survey'
+  if (hash.startsWith('#quiz/')) return 'quiz'
   if (hash.startsWith('#') && hash.length > 1) return hash.slice(1)
 
   return 'study'
@@ -174,6 +222,18 @@ function getRouteAssignmentId() {
   if (!window.location.hash.startsWith('#assignment/')) return ''
 
   return decodeURIComponent(window.location.hash.slice('#assignment/'.length))
+}
+
+function getRouteSurveyId() {
+  if (!window.location.hash.startsWith('#survey/')) return ''
+
+  return decodeURIComponent(window.location.hash.slice('#survey/'.length))
+}
+
+function getRouteQuizId() {
+  if (!window.location.hash.startsWith('#quiz/')) return ''
+
+  return decodeURIComponent(window.location.hash.slice('#quiz/'.length))
 }
 
 function setCourseHash(courseId) {
@@ -205,6 +265,35 @@ function logError(label, error) {
   })
 }
 
+const feedbackOpen = ref(false)
+
+// 反馈对话框打开时按当前页面状态生成诊断报告，脱敏规则见 utils/feedback-report.js
+function buildCurrentFeedbackReport() {
+  return buildFeedbackReport({
+    app: {
+      commit: typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : '',
+      mode: import.meta.env.MODE,
+      backend: BACKEND_ORIGIN ? new URL(BACKEND_ORIGIN).host : 'same-origin',
+    },
+    view: activeView.value,
+    environment: {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      viewport: { width: Math.round(window.innerWidth / 10) * 10, height: Math.round(window.innerHeight / 10) * 10 },
+    },
+    session: { ucloud: Boolean(userInfo.value), jwgl: Boolean(jwglSessionId.value) },
+    courses: courses.value,
+    assignments: assignments.value,
+    selected: activeView.value === 'assignment' ? selectedAssignment.value : null,
+    detail: activeView.value === 'assignment' ? assignmentDetail.value : null,
+    submitView: activeView.value === 'assignment' ? assignmentSubmitView.value : null,
+    submitResult: activeView.value === 'assignment' ? assignmentSubmitResult.value : null,
+    logs: logs.value,
+    known: [...collectKnownSecrets({ userInfo: userInfo.value, username: username.value, token: bladeToken.value }), refreshToken.value].filter(Boolean),
+  })
+}
+
 function resetCourseResources() {
   courseResourceRequestId += 1
   selectedCourse.value = null
@@ -225,18 +314,38 @@ function resetAssignmentDetail() {
   selectedAssignment.value = null
   assignmentDetail.value = null
   assignmentSubmitView.value = null
+  submittedResources.value = []
   assignmentResources.value = []
   assignmentDetailError.value = ''
   assignmentSubmitError.value = ''
   assignmentSubmitResult.value = null
-  submittingAssignment.value = false
+  abortAssignmentSubmit()
   loadingAssignmentId.value = ''
 }
 
 function syncViewFromHash() {
+  const previousSurveyId = routeSurveyId.value
+  const previousQuizId = routeQuizId.value
   activeView.value = getViewFromHash()
   routeCourseId.value = getRouteCourseId()
   routeAssignmentId.value = getRouteAssignmentId()
+  routeSurveyId.value = getRouteSurveyId()
+  routeQuizId.value = getRouteQuizId()
+
+  // 加载完待办后也会走到这里；编号没变时保留已读到的标题（不在待办里的测验 selectedQuiz 一直为空）
+  if (activeView.value === 'quiz' && selectedQuiz.value?.activityId !== routeQuizId.value) {
+    if (previousQuizId !== routeQuizId.value) quizTitle.value = ''
+    selectedQuiz.value =
+      activityTasks.value.find((task) => task.kind === 'quiz' && task.activityId === routeQuizId.value) || null
+    return
+  }
+
+  if (activeView.value === 'survey' && selectedSurvey.value?.activityId !== routeSurveyId.value) {
+    if (previousSurveyId !== routeSurveyId.value) surveyTitle.value = ''
+    selectedSurvey.value =
+      activityTasks.value.find((task) => task.kind === 'survey' && task.activityId === routeSurveyId.value) || null
+    return
+  }
 
   if (activeView.value === 'course' && routeCourseId.value) {
     if (getCourseId(selectedCourse.value) === routeCourseId.value) return
@@ -269,8 +378,6 @@ function extractAssignmentDetailResources(body) {
     data.attachmentVOs,
     data.attachmentList,
     data.attachments,
-    data.submitAttachments,
-    data.submitAttachmentList,
     data.workAttachments,
     data.workAttachmentList,
     data.resources,
@@ -315,25 +422,16 @@ function getResourceIdentity(item) {
   )
 }
 
-function mergeAssignmentResources(resources) {
+function replaceSubmittedResources(resources) {
   const seen = new Set()
 
-  assignmentResources.value = [...assignmentResources.value, ...resources].filter((resource, index) => {
+  submittedResources.value = resources.filter((resource, index) => {
     const identity = getResourceIdentity(resource) || `fallback-${index}`
     if (seen.has(identity)) return false
 
     seen.add(identity)
     return true
   })
-}
-
-function formatBackendTime(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0')
-
-  return [
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
-  ].join(' ')
 }
 
 function pickSubmitTime(body) {
@@ -350,19 +448,6 @@ function pickSubmitTime(body) {
   )
 }
 
-function hasSubmitViewResult(body, assignmentId) {
-  const data = body?.data ?? body
-  if (!data || typeof data !== 'object') return false
-
-  if (String(data.assignmentId || '') === String(assignmentId)) return true
-
-  return Boolean(
-    data.assignmentContent ||
-      data.assignmentComment ||
-      (Array.isArray(data.attachmentIds) && data.attachmentIds.length > 0),
-  )
-}
-
 function patchSubmittedAssignment(assignment, submitTime) {
   if (!assignment) return assignment
 
@@ -373,10 +458,12 @@ function patchSubmittedAssignment(assignment, submitTime) {
     isCompleted: true,
     isUrgent: false,
     isOverdue: false,
+    isMissed: false,
     status: '已提交',
     raw: {
       ...(assignment.raw || {}),
-      status: 3,
+      // assignmentStatus 才是提交状态（99 未提交）；status 是作业是否截止，保持学校的值
+      assignmentStatus: 0,
       submitTime: assignment.raw?.submitTime || submitTime,
     },
   }
@@ -422,7 +509,7 @@ function markAssignmentSubmitted(assignmentId, submitTime) {
   if (assignmentDetail.value) {
     assignmentDetail.value = {
       ...assignmentDetail.value,
-      status: 3,
+      assignmentStatus: 0,
       submitTime: assignmentDetail.value.submitTime || submitTime,
     }
   }
@@ -434,7 +521,7 @@ function markAssignmentSubmitted(assignmentId, submitTime) {
   })
 }
 
-async function refreshAssignmentsAfterSubmit(assignmentId, submitTime) {
+async function refreshAssignmentsAfterSubmit(assignmentId) {
   try {
     const knownAssignments = buildKnownAssignmentMap()
     const assignmentCall = await getAssignments(bladeToken.value, {
@@ -449,9 +536,11 @@ async function refreshAssignmentsAfterSubmit(assignmentId, submitTime) {
     assignments.value = sortAssignments(
       (assignmentCall.result.body?.data?.records || []).map((record) => {
         const normalized = normalizeAssignmentWithKnownCourse(record, knownAssignments)
+        const confirmedLocally = assignmentSubmitResult.value?.confirmed && getAssignmentId(normalized) === assignmentId
 
-        return getAssignmentId(normalized) === assignmentId && !normalized.isCompleted
-          ? patchSubmittedAssignment(normalized, submitTime)
+        // 只有 submit-view 已确认提交时才补齐列表状态，学校未确认时以学校列表为准
+        return confirmedLocally && !normalized.isCompleted
+          ? patchSubmittedAssignment(normalized, assignmentSubmitResult.value.submitTime || formatBeijingTime())
           : normalized
       }),
     )
@@ -534,9 +623,12 @@ function normalizeBladeTokenInput(value) {
     .trim()
 }
 
-function saveBladeToken(nextToken, source) {
+function saveBladeToken(nextToken, source, nextRefreshToken = '') {
   bladeToken.value = nextToken
   localStorage.setItem(TOKEN_KEY, nextToken)
+  refreshToken.value = nextRefreshToken
+  if (nextRefreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, nextRefreshToken)
+  else localStorage.removeItem(REFRESH_TOKEN_KEY)
   log('auth:blade-token-saved', {
     source,
     token: nextToken,
@@ -580,7 +672,8 @@ async function login() {
       return
     }
 
-    saveBladeToken(nextToken, 'password-login')
+    const nextRefreshToken = typeof result.body?.refresh_token === 'string' ? result.body.refresh_token : ''
+    saveBladeToken(nextToken, 'password-login', nextRefreshToken)
 
     await loadStudyData()
   } catch (error) {
@@ -635,7 +728,10 @@ async function loadStudyData() {
     log('study:courses:response', courseCall.result)
     checkAuth(courseCall.result, '课程列表')
     courses.value = courseCall.result.body?.data?.records || []
-    const assignmentCourseMap = await buildAssignmentCourseMap(courses.value)
+    const [assignmentCourseMap, nextActivityTasks] = await Promise.all([
+      buildAssignmentCourseMap(courses.value),
+      loadActivityTasks(user.id, courses.value),
+    ])
 
     const assignmentCall = await getAssignments(bladeToken.value, {
       current: 1,
@@ -655,6 +751,8 @@ async function loadStudyData() {
         })
       }),
     )
+    activityTasks.value = nextActivityTasks
+    await refreshPeerReviewTasks()
 
     lastLoadedAt.value = new Date().toLocaleString()
     syncViewFromHash()
@@ -664,6 +762,61 @@ async function loadStudyData() {
   } finally {
     loadingStudy.value = false
   }
+}
+
+async function refreshPeerReviewTasks() {
+  const token = bladeToken.value
+  if (!token) return
+  const request = ++peerTodoRequest
+  const { tasks, errors } = await loadPeerReviewTasks(token, assignments.value, { previous: peerReviewTasks.value })
+  if (token !== bladeToken.value || request !== peerTodoRequest) return
+  peerReviewTasks.value = tasks
+  peerTodoWarning.value = errors.length ? '部分互评待办未能更新，请刷新重试；作业提交状态不代表互评已完成。' : ''
+}
+
+// 问卷和测验各自单独请求，读不到时不影响作业列表
+async function loadActivityTasks(userId, courseRecords) {
+  const courseNames = new Map(courseRecords.map((course) => [getCourseId(course), getCourseName(course)]))
+
+  const surveyCalls = [1, 2].map(async (level) => {
+    try {
+      const surveyCall = await getTodoSurveys(bladeToken.value, { userId, level })
+      log('study:surveys:start', surveyCall.request)
+      log('study:surveys:response', surveyCall.result)
+      checkAuth(surveyCall.result, '问卷列表')
+
+      return (surveyCall.result.body?.data?.records || []).map((record) =>
+        normalizeSurvey(record, courseNames.get(String(record.siteId))),
+      )
+    } catch (error) {
+      logError('study:surveys:error', error)
+      return []
+    }
+  })
+
+  const quizCalls = courseRecords.map(async (course) => {
+    const courseId = getCourseId(course)
+    if (!courseId) return []
+
+    try {
+      const quizCall = await getQuizzes(bladeToken.value, courseId)
+      log('study:quizzes:start', quizCall.request)
+      log('study:quizzes:response', quizCall.result)
+      checkAuth(quizCall.result, '测验列表')
+
+      return (quizCall.result.body?.data?.records || []).map((record) =>
+        normalizeQuiz(record, { courseId, courseName: getCourseName(course) }),
+      )
+    } catch (error) {
+      logError('study:quizzes:error', error)
+      return []
+    }
+  })
+
+  const tasks = (await Promise.all([...surveyCalls, ...quizCalls])).flat()
+
+  // 截止后还没交的问卷和测验没法再作答，不再列出；已交的测验保留，可以看卷面
+  return tasks.filter((task) => !task.isOverdue)
 }
 
 async function loadCourseResources(course) {
@@ -787,7 +940,7 @@ async function loadAssignmentSubmitView(assignmentId, requestId) {
       return
     }
 
-    if (hasSubmitViewResult(submitViewCall.result.body, assignmentId)) {
+    if (isSubmitViewSubmitted(submitViewCall.result.body)) {
       const submitTime = pickSubmitTime(submitViewCall.result.body) || selectedAssignment.value?.submitTime || ''
       markAssignmentSubmitted(assignmentId, submitTime)
       await loadSubmitAttachmentResources(extractSubmitViewAttachmentIds(submitViewCall.result.body), requestId)
@@ -829,6 +982,8 @@ async function loadAssignmentResourceDetails(rawResources, requestId) {
 }
 
 async function loadSubmitAttachmentResources(attachmentIds, requestId) {
+  if (requestId !== assignmentDetailRequestId) return
+  submittedResources.value = []
   if (attachmentIds.length === 0) return
 
   try {
@@ -846,7 +1001,7 @@ async function loadSubmitAttachmentResources(attachmentIds, requestId) {
 
     if (requestId !== assignmentDetailRequestId) return
 
-    mergeAssignmentResources(resources)
+    replaceSubmittedResources(resources)
   } catch (error) {
     logError('study:submit-attachment-resource:error', error)
   }
@@ -858,10 +1013,12 @@ async function loadAssignmentResources(assignment) {
   selectedAssignment.value = assignment
   assignmentDetail.value = null
   assignmentSubmitView.value = null
+  submittedResources.value = []
   assignmentResources.value = []
   assignmentDetailError.value = ''
   assignmentSubmitError.value = ''
   assignmentSubmitResult.value = null
+  abortAssignmentSubmit()
 
   if (!bladeToken.value) {
     assignmentDetailError.value = '需要先登录或粘贴 Blade-Auth'
@@ -957,6 +1114,65 @@ function backToCourse(panel) {
   }
 }
 
+function openTodoItem(item) {
+  if (item.kind === 'peer-review') { openPeerReviewTodo(item); return }
+  if (item.kind === 'survey') {
+    openSurvey(item)
+    return
+  }
+  if (item.kind === 'quiz') {
+    openQuiz(item)
+    return
+  }
+
+  openAssignment(item)
+}
+
+function openPeerReviewTodo(item, batch = false) {
+  const assignment = assignments.value.find((entry) => String(entry.id) === item.activityId)
+  if (!assignment) return
+  openAssignment(assignment)
+  assignmentTab.value = 'review'
+  assignmentPeerOpened.value = true
+  reviewBatchRequested.value = batch
+}
+
+function openSurvey(survey) {
+  selectedSurvey.value = survey
+  surveyTitle.value = ''
+  activeView.value = 'survey'
+  routeSurveyId.value = survey.activityId
+  window.location.hash = `#survey/${encodeURIComponent(survey.activityId)}`
+}
+
+function handleSurveySubmitted(surveyId) {
+  log('study:survey-submitted', { surveyId })
+  activityTasks.value = activityTasks.value.filter(
+    (task) => !(task.kind === 'survey' && task.activityId === surveyId),
+  )
+  if (selectedSurvey.value?.activityId === surveyId) {
+    selectedSurvey.value = { ...selectedSurvey.value, isCompleted: true, level: 'submitted', status: '已提交' }
+  }
+}
+
+function openQuiz(quiz) {
+  selectedQuiz.value = quiz
+  quizTitle.value = ''
+  activeView.value = 'quiz'
+  routeQuizId.value = quiz.activityId
+  window.location.hash = `#quiz/${encodeURIComponent(quiz.activityId)}`
+}
+
+function handleQuizSubmitted(quizId) {
+  log('study:quiz-submitted', { quizId })
+  // 交卷后留在列表的「已完成」里，方便回来看卷面；分数等下次刷新待办时更新
+  const markSubmitted = (task) => ({ ...task, isCompleted: true, level: 'submitted', status: '已提交', isUrgent: false, isOverdue: false })
+  activityTasks.value = activityTasks.value.map((task) =>
+    task.kind === 'quiz' && task.activityId === quizId ? markSubmitted(task) : task,
+  )
+  if (selectedQuiz.value?.activityId === quizId) selectedQuiz.value = markSubmitted(selectedQuiz.value)
+}
+
 function openAssignment(assignment) {
   const assignmentId = getAssignmentId(assignment)
 
@@ -1012,29 +1228,91 @@ function pickUploadAttachmentId(body) {
   return id ? String(id) : ''
 }
 
-async function uploadAssignmentFiles(files) {
+function abortAssignmentSubmit() {
+  submitController?.abort()
+  submitController = null
+  submittingAssignment.value = false
+  uploadProgress.value = null
+}
+
+function getAttachmentCacheKey(assignmentId, file) {
+  return [assignmentId, file.name, file.size, file.lastModified].join('|')
+}
+
+function isRetryableUploadError(error) {
+  return Boolean(error?.retryable) && error?.name !== 'AbortError'
+}
+
+async function uploadOneAttachment(file, signal, report) {
+  const maxAttempts = 2
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const uploadCall = await uploadBusinessResource(bladeToken.value, {
+        file,
+        userId: userInfo.value.id,
+        bizType: 3,
+        signal,
+        onProgress: (progress) => report({ ...progress, attempt }),
+      })
+
+      log('study:attachment-upload:start', { ...uploadCall.request, attempt })
+      log('study:attachment-upload:response', uploadCall.result)
+      checkAuth(uploadCall.result, '附件上传')
+
+      const attachmentId = pickUploadAttachmentId(uploadCall.result.body)
+      if (!attachmentId) {
+        throw new Error('附件上传响应里没有 data')
+      }
+      return attachmentId
+    } catch (error) {
+      logError('study:attachment-upload:error', { file: describeFile(file), attempt, message: error?.message })
+      if (attempt >= maxAttempts || !isRetryableUploadError(error) || signal.aborted) {
+        throw new Error(`附件「${file.name}」上传失败：${error?.message || '未知错误'}`, { cause: error })
+      }
+    }
+  }
+}
+
+async function uploadAssignmentFiles(assignmentId, files, signal) {
   const attachmentIds = []
 
-  for (const file of files) {
-    const uploadCall = await uploadBusinessResource(bladeToken.value, {
-      file,
-      userId: userInfo.value.id,
-      bizType: 3,
-    })
-
-    log('study:attachment-upload:start', uploadCall.request)
-    log('study:attachment-upload:response', uploadCall.result)
-    checkAuth(uploadCall.result, '附件上传')
-
-    const attachmentId = pickUploadAttachmentId(uploadCall.result.body)
-    if (!attachmentId) {
-      throw new Error('附件上传响应里没有 data')
+  for (const [index, file] of files.entries()) {
+    const cacheKey = getAttachmentCacheKey(assignmentId, file)
+    const cached = uploadedAttachmentCache.get(cacheKey)
+    if (cached) {
+      log('study:attachment-upload:reused', { file: describeFile(file), attachmentId: cached })
+      attachmentIds.push(cached)
+      continue
     }
 
+    const report = (progress) => {
+      uploadProgress.value = { index: index + 1, count: files.length, name: file.name, size: file.size, ...progress }
+    }
+    report({ loaded: 0, total: file.size, elapsedMs: 0, sent: false, attempt: 1 })
+    const attachmentId = await uploadOneAttachment(file, signal, report)
+    uploadedAttachmentCache.set(cacheKey, attachmentId)
     attachmentIds.push(attachmentId)
   }
 
+  uploadProgress.value = null
   return attachmentIds
+}
+
+async function confirmSubmission(assignmentId) {
+  // 学校提交接口返回成功不代表已记录，以 submit-view 查到的提交记录为准
+  for (const delayMs of [0, 1500, 4000]) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))
+    try {
+      const viewCall = await getAssignmentSubmitView(bladeToken.value, assignmentId)
+      log('study:assignment-submit-confirm:response', viewCall.result)
+      if (viewCall.result.ok && isSubmitViewSubmitted(viewCall.result.body)) {
+        return { confirmed: true, body: viewCall.result.body }
+      }
+    } catch (error) {
+      logError('study:assignment-submit-confirm:error', error)
+    }
+  }
+  return { confirmed: false, body: null }
 }
 
 async function submitSelectedAssignment({ assignment, content, files = [] }) {
@@ -1056,10 +1334,13 @@ async function submitSelectedAssignment({ assignment, content, files = [] }) {
     return
   }
 
+  abortAssignmentSubmit()
+  const controller = new AbortController()
+  submitController = controller
   submittingAssignment.value = true
 
   try {
-    const uploadedAttachmentIds = files.length > 0 ? await uploadAssignmentFiles(files) : []
+    const uploadedAttachmentIds = files.length > 0 ? await uploadAssignmentFiles(assignmentId, files, controller.signal) : []
     const localFiles = files.map(describeFile)
     const payload = {
       attachmentIds: uploadedAttachmentIds,
@@ -1085,21 +1366,36 @@ async function submitSelectedAssignment({ assignment, content, files = [] }) {
     })
     log('study:assignment-submit:response', submitCall.result)
     checkAuth(submitCall.result, '作业提交')
+    if (controller.signal.aborted) return
 
-    assignmentSubmitResult.value = submitCall.result.body || {
-      status: submitCall.result.status,
-      statusText: submitCall.result.statusText,
+    const confirmation = await confirmSubmission(assignmentId)
+    if (controller.signal.aborted) return
+
+    if (confirmation.confirmed) {
+      assignmentSubmitView.value = confirmation.body?.data ?? confirmation.body
+      for (const file of files) uploadedAttachmentCache.delete(getAttachmentCacheKey(assignmentId, file))
+      const submitTime = pickSubmitTime(confirmation.body) || pickSubmitTime(submitCall.result.body) || ''
+      assignmentSubmitResult.value = {
+        confirmed: true,
+        submitTime,
+        attachmentCount: extractSubmitViewAttachmentIds(confirmation.body).length,
+      }
+      markAssignmentSubmitted(assignmentId, submitTime || formatBeijingTime())
+      await loadSubmitAttachmentResources(extractSubmitViewAttachmentIds(confirmation.body), assignmentDetailRequestId)
+    } else {
+      assignmentSubmitResult.value = { confirmed: false }
     }
-
-    const submitTime = pickSubmitTime(submitCall.result.body) || formatBackendTime()
-    markAssignmentSubmitted(assignmentId, submitTime)
-    await loadSubmitAttachmentResources(uploadedAttachmentIds, assignmentDetailRequestId)
-    await refreshAssignmentsAfterSubmit(assignmentId, submitTime)
+    await refreshAssignmentsAfterSubmit(assignmentId)
   } catch (error) {
+    if (controller.signal.aborted) return
     assignmentSubmitError.value = error?.message || '提交作业失败'
     logError('study:assignment-submit:error', error)
   } finally {
-    submittingAssignment.value = false
+    if (submitController === controller) {
+      submitController = null
+      submittingAssignment.value = false
+      uploadProgress.value = null
+    }
   }
 }
 
@@ -1122,10 +1418,20 @@ function clearToken() {
   userInfo.value = null
   courses.value = []
   assignments.value = []
+  activityTasks.value = []
+  peerTodoRequest++
+  peerReviewTasks.value = []
+  peerTodoWarning.value = ''
+  selectedSurvey.value = null
+  surveyTitle.value = ''
+  selectedQuiz.value = null
+  quizTitle.value = ''
   resetCourseResources()
   resetCourseAssignments()
   resetAssignmentDetail()
   localStorage.removeItem(TOKEN_KEY)
+  refreshToken.value = ''
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
   log('auth:token-cleared', {
     storageKey: TOKEN_KEY,
   })
@@ -1144,6 +1450,26 @@ function checkAuth(result, label) {
     throw new Error('Token 已过期，请重新登录')
   }
   assertUcloudOk(result, label)
+}
+
+// 复制给 agent 的提示词带上当前凭证；命令行工具与网页用同一个后端
+async function copyAgentPrompt() {
+  const backend = BACKEND_ORIGIN || window.location.origin
+  const text = buildAgentPrompt({
+    cliUrl: new URL('agent/myu.mjs', document.baseURI).href,
+    backend,
+    token: bladeToken.value,
+    refreshToken: refreshToken.value,
+  })
+  try {
+    await navigator.clipboard.writeText(text)
+    agentCopyLabel.value = refreshToken.value ? '已复制' : '已复制（2 小时内有效）'
+  } catch {
+    window.prompt('复制下面的提示词，粘贴给 agent', text)
+    agentCopyLabel.value = ''
+    return
+  }
+  setTimeout(() => { agentCopyLabel.value = '' }, 2500)
 }
 
 function clearLogs() {
@@ -1183,10 +1509,15 @@ onUnmounted(() => {
 
 <template>
   <AppShell
+    :user-label="userLabel"
+    :authenticated="Boolean(userInfo)"
     :active-view="activeView"
     :debug-enabled="debugEnabled"
     :plugins="plugins"
+    :agent-copy-label="agentCopyLabel"
     @change-view="setView"
+    @feedback="feedbackOpen = true"
+    @copy-agent="copyAgentPrompt"
   >
     <template v-if="activeView === 'study'">
       <AuthBar
@@ -1206,10 +1537,10 @@ onUnmounted(() => {
       <section v-if="studyError" class="notice error">
         {{ studyError }}
       </section>
+      <section v-if="peerTodoWarning" class="notice warning" role="status">{{ peerTodoWarning }} <button class="button-secondary" type="button" @click="refreshPeerReviewTasks">刷新互评待办</button></section>
 
-      <section class="study-overview" aria-label="学习概览">
+      <section v-if="userInfo" class="study-overview" aria-label="学习概览">
         <div class="overview-heading">
-          <span>OVERVIEW</span>
           <strong>学习概览</strong>
         </div>
         <div class="metrics-grid">
@@ -1221,34 +1552,39 @@ onUnmounted(() => {
             <span>待完成</span>
             <strong>{{ pendingAssignments.length }}</strong>
           </div>
-          <div class="metric-card metric-urgent">
+          <div class="metric-card metric-urgent" :class="{ 'has-value': urgentAssignments.length }">
             <span>临近截止</span>
             <strong>{{ urgentAssignments.length }}</strong>
           </div>
-          <div class="metric-card metric-overdue">
-            <span>已逾期</span>
+          <div class="metric-card metric-overdue" :class="{ 'has-value': overdueAssignments.length }">
+            <span>截止未交</span>
             <strong>{{ overdueAssignments.length }}</strong>
           </div>
         </div>
       </section>
 
-      <CourseGrid
-        :courses="courses"
-        :loading="loadingStudy"
-        :loading-course-id="loadingCourseId"
-        :selected-course-id="selectedCourseId"
-        @select="openCourse"
-      />
-      <DeadlineList
-        v-model:include-completed="includeCompleted"
-        v-model:page-size="assignmentPageSize"
-        :assignments="visibleAssignments"
-        :last-loaded-at="lastLoadedAt"
-        :loading="loadingStudy"
-        :loading-assignment-id="loadingAssignmentId"
-        :selected-assignment-id="selectedAssignmentId"
-        @select="openAssignment"
-      />
+      <div class="study-columns">
+        <CourseGrid
+          :courses="courses"
+          :loading="loadingStudy"
+          :loading-course-id="loadingCourseId"
+          :selected-course-id="selectedCourseId"
+          @select="openCourse"
+        />
+        <DeadlineList
+          v-model:include-completed="includeCompleted"
+          v-model:page-size="assignmentPageSize"
+          title="待办"
+          empty-text="暂无待办"
+          :assignments="visibleAssignments"
+          @batch-review="openPeerReviewTodo($event, true)"
+          :last-loaded-at="lastLoadedAt"
+          :loading="loadingStudy"
+          :loading-assignment-id="loadingAssignmentId"
+          :selected-assignment-id="selectedAssignmentId"
+          @select="openTodoItem"
+        />
+      </div>
     </template>
 
     <template v-else-if="activeView === 'course'">
@@ -1313,7 +1649,7 @@ onUnmounted(() => {
           <span class="context-eyebrow">ASSIGNMENT</span>
           <h1>{{ selectedAssignment?.title || '作业详情' }}</h1>
           <p>
-            {{ [selectedAssignment?.courseName, selectedAssignment?.chapter].filter(Boolean).join(' · ') || '正在读取作业信息' }}
+            {{ [selectedAssignment?.courseName, selectedAssignment?.chapter].filter(Boolean).join('　') || '正在读取作业信息' }}
           </p>
         </div>
         <div class="detail-context-side">
@@ -1328,17 +1664,98 @@ onUnmounted(() => {
           </div>
         </div>
       </section>
-      <AssignmentDetailPanel
-        :assignment="selectedAssignment"
-        :detail="assignmentDetail"
-        :error="assignmentDetailError"
-        :loading="Boolean(loadingAssignmentId)"
-        :resources="assignmentResources"
+      <nav v-if="peerReviewEnabled" class="context-tabs assignment-tabs" aria-label="作业视图">
+        <button type="button" :class="{ active: assignmentTab === 'detail' }" :aria-pressed="assignmentTab === 'detail'" @click="assignmentTab = 'detail'">作业详情</button>
+        <button type="button" :class="{ active: assignmentTab === 'review' }" :aria-pressed="assignmentTab === 'review'" @click="assignmentTab = 'review'; assignmentPeerOpened = true">作业互评</button>
+      </nav>
+      <PeerReviewPanel
+        v-if="peerReviewEnabled && assignmentPeerOpened"
+        v-show="assignmentTab === 'review'"
+        :key="String(selectedAssignment?.id || '')"
+        :assignment-id="String(selectedAssignment?.id || '')"
+        :title="selectedAssignment?.title || assignmentDetail?.assignmentTitle || ''"
+        :token="bladeToken"
+        :rules="assignmentDetail?.assignmentMutualEvaluation || {}"
         :submit-view="assignmentSubmitView"
-        :submit-error="assignmentSubmitError"
-        :submit-result="assignmentSubmitResult"
-        :submitting="submittingAssignment"
-        @submit="submitSelectedAssignment"
+        :batch-requested="reviewBatchRequested"
+        @batch-opened="reviewBatchRequested = false"
+        @updated="refreshPeerReviewTasks"
+        @expired="handleTokenExpiry('assignment')"
+      />
+      <div v-show="!peerReviewEnabled || assignmentTab === 'detail'">
+        <AssignmentDetailPanel
+          :assignment="selectedAssignment"
+          :detail="assignmentDetail"
+          :error="assignmentDetailError"
+          :loading="Boolean(loadingAssignmentId)"
+          :resources="assignmentResources"
+          :submitted-resources="submittedResources"
+          :submit-view="assignmentSubmitView"
+          :submit-error="assignmentSubmitError"
+          :submit-result="assignmentSubmitResult"
+          :upload-progress="uploadProgress"
+          :submitting="submittingAssignment"
+          @submit="submitSelectedAssignment"
+        />
+      </div>
+    </template>
+
+    <template v-else-if="activeView === 'survey'">
+      <section class="detail-context">
+        <button class="detail-back" type="button" @click="setView('study')">
+          <span aria-hidden="true">←</span>
+          首页
+        </button>
+        <div class="detail-context-copy">
+          <span class="context-eyebrow">SURVEY</span>
+          <h1>{{ selectedSurvey?.title || surveyTitle || '问卷' }}</h1>
+          <p>{{ selectedSurvey?.courseName || '课程问卷' }}</p>
+        </div>
+        <div class="detail-context-side">
+          <AssignmentStatus
+            v-if="selectedSurvey"
+            :level="selectedSurvey.level"
+            :status="selectedSurvey.status"
+          />
+        </div>
+      </section>
+      <SurveyPanel
+        :survey-id="routeSurveyId"
+        :token="bladeToken"
+        :user-id="String(userInfo?.id || '')"
+        :already-submitted="Boolean(selectedSurvey?.isCompleted)"
+        @expired="handleTokenExpiry('survey')"
+        @loaded="surveyTitle = $event.theme || ''"
+        @submitted="handleSurveySubmitted"
+      />
+    </template>
+
+    <template v-else-if="activeView === 'quiz'">
+      <section class="detail-context">
+        <button class="detail-back" type="button" @click="setView('study')">
+          <span aria-hidden="true">←</span>
+          首页
+        </button>
+        <div class="detail-context-copy">
+          <span class="context-eyebrow">QUIZ</span>
+          <h1>{{ selectedQuiz?.title || quizTitle || '测验' }}</h1>
+          <p>{{ selectedQuiz?.courseName || '课程测验' }}</p>
+        </div>
+        <div class="detail-context-side">
+          <AssignmentStatus
+            v-if="selectedQuiz"
+            :level="selectedQuiz.level"
+            :status="selectedQuiz.status"
+          />
+        </div>
+      </section>
+      <QuizPanel
+        :quiz-id="routeQuizId"
+        :token="bladeToken"
+        :user-id="String(userInfo?.id || '')"
+        @expired="handleTokenExpiry('quiz')"
+        @loaded="quizTitle = $event.title || ''"
+        @submitted="handleQuizSubmitted"
       />
     </template>
 
@@ -1371,5 +1788,11 @@ onUnmounted(() => {
     />
 
     <section v-else class="notice error">页面不存在</section>
+    <FeedbackDialog
+      v-if="feedbackOpen"
+      :build-report="buildCurrentFeedbackReport"
+      :initial-category="activeView === 'assignment' ? 'submit' : 'display'"
+      @close="feedbackOpen = false"
+    />
   </AppShell>
 </template>

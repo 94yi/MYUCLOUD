@@ -2,7 +2,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import JwglAuthBar from './JwglAuthBar.vue'
 import { jwglLoggedIn, jwglRequest, jwglSessionId, jwglUsername } from '../../api/jwgl.js'
-import { TIMETABLE_KEY, currentTimetableWeek, groupTimetableCourses, mergeTimetableWeek, readTimetableCache } from '../../utils/timetable.js'
+import {
+  TIMETABLE_KEY, currentTimetableWeek, groupTimetableCourses, mergeTimetableWeek, readTimetableCache,
+  LEGACY_TIMETABLE_NOTES_KEY, migrateLegacyTimetableNotes, readTimetableNotes, writeTimetableNote,
+} from '../../utils/timetable.js'
 
 const error = ref('')
 const storageWarning = ref('')
@@ -23,6 +26,31 @@ const current = computed(() => weeks.value.find((week) => week.week === selected
 const groups = computed(() => Array.from({ length: 7 }, (_, index) => groupTimetableCourses(current.value?.courses || [], index + 1)))
 const savedAt = computed(() => cache.value ? new Date(cache.value.savedAt).toLocaleString('zh-CN', { hour12: false }) : '')
 const missingWeeks = computed(() => (current.value?.weeks || []).filter((week) => !weeks.value.some((saved) => saved.week === week)))
+const notes = ref({})
+const legacyNotes = ref({})
+const editingNote = ref(null)
+// 课表同步出新周次后再试一次迁移，之前对不上课程的旧备注可能就能归属了。
+watch(cache, (value, previous) => {
+  if (value?.username !== previous?.username) editingNote.value = null
+  try {
+    legacyNotes.value = value ? migrateLegacyTimetableNotes(localStorage, value) : {}
+    notes.value = value ? readTimetableNotes(localStorage, value.username) : {}
+  } catch {
+    storageWarning.value = '无法读取本地课表备注。'
+  }
+}, { immediate: true })
+
+function clearLegacyNotes() {
+  try {
+    const all = JSON.parse(localStorage.getItem(LEGACY_TIMETABLE_NOTES_KEY) || '{}') || {}
+    delete all[cache.value.username]
+    localStorage.setItem(LEGACY_TIMETABLE_NOTES_KEY, JSON.stringify(all))
+    legacyNotes.value = {}
+  } catch {
+    storageWarning.value = '浏览器未能清除旧备注。'
+  }
+}
+watch(selectedWeek, () => { editingNote.value = null })
 let controller
 onBeforeUnmount(() => controller?.abort())
 watch(jwglSessionId, () => controller?.abort(), { flush: 'sync' })
@@ -68,6 +96,8 @@ async function syncTimetable() {
   }
 }
 
+const vFocus = { mounted: (el) => el.focus() }
+
 function moveWeek(direction) {
   const index = weeks.value.findIndex((week) => week.week === selectedWeek.value)
   selectedWeek.value = weeks.value[index + direction]?.week ?? selectedWeek.value
@@ -79,6 +109,21 @@ function groupAt(day, period) {
 
 function isCovered(day, period) {
   return groups.value[day - 1].some((group) => group.start < period && group.end >= period)
+}
+
+// 同一课程一周内可能出现多次，slot 只用于确定在哪个格子里展开编辑框。
+function editNote(course, slot) {
+  editingNote.value = { name: course.name, slot, text: notes.value[course.name] || '' }
+}
+
+function saveNote() {
+  const { name, text } = editingNote.value
+  try {
+    notes.value = writeTimetableNote(localStorage, cache.value.username, name, text)
+    editingNote.value = null
+  } catch {
+    storageWarning.value = '浏览器未能保存备注，请检查存储空间或隐私设置。'
+  }
 }
 </script>
 
@@ -113,14 +158,14 @@ function isCovered(day, period) {
           <button class="button-secondary" :disabled="selectedWeek === weeks.at(-1).week" type="button" @click="moveWeek(1)">下一周</button>
           <button v-if="currentTimetableWeek(weeks) !== undefined" class="button-secondary" type="button" @click="selectedWeek = currentTimetableWeek(weeks)">本周</button>
         </div>
-        <p>{{ cache.username }} · 本地课表 · 同步于 {{ savedAt }}</p>
+        <p>{{ cache.username }}　本地课表　同步于 {{ savedAt }}</p>
         <p v-if="missingWeeks.length && !busy">已保存 {{ weeks.length }} 周课表，尚有 {{ missingWeeks.length }} 周未同步。</p>
       </div>
       <p v-if="!current.courses.length" class="notice">第 {{ selectedWeek }} 周暂无课程。</p>
 
       <div class="timetable-scroll" tabindex="0" aria-label="每周课表，可横向滚动">
         <table class="timetable-grid">
-          <caption>第 {{ selectedWeek }} 周 · {{ current.days[0].date }} — {{ current.days[6].date }}</caption>
+          <caption>第 {{ selectedWeek }} 周　{{ current.days[0].date }} — {{ current.days[6].date }}</caption>
           <thead><tr>
             <th scope="col">节次</th>
             <th v-for="day in current.days" :key="day.label" scope="col">{{ day.label }}<small>{{ day.date }}</small></th>
@@ -140,6 +185,15 @@ function isCovered(day, period) {
                     <span v-if="course.campus">{{ course.campus }}</span>
                     <small>第 {{ course.start }}–{{ course.end }} 节</small>
                     <details><summary>课程详情</summary><p v-for="detail in course.details" :key="detail">{{ detail }}</p></details>
+                    <form v-if="editingNote?.slot === `${day}-${period.number}-${index}`" class="timetable-note-editor" @submit.prevent="saveNote" @keydown.esc="editingNote = null">
+                      <textarea v-model="editingNote.text" v-focus :aria-label="`${course.name}备注`" @keydown.enter.meta.prevent="saveNote" @keydown.enter.ctrl.prevent="saveNote"></textarea>
+                      <div class="inline-actions">
+                        <button type="submit">保存</button>
+                        <button class="button-secondary" type="button" @click="editingNote = null">取消</button>
+                      </div>
+                    </form>
+                    <button v-else-if="notes[course.name]" class="timetable-note" type="button" title="编辑课程备注" @click="editNote(course, `${day}-${period.number}-${index}`)">{{ notes[course.name] }}</button>
+                    <button v-else class="timetable-note-add" type="button" :aria-label="`为${course.name}添加备注`" @click="editNote(course, `${day}-${period.number}-${index}`)">+ 备注</button>
                   </article>
                 </td>
               </template>
@@ -151,6 +205,11 @@ function isCovered(day, period) {
     <div v-else-if="!busy" class="empty-state empty-state-card">
       <strong>暂无课表</strong>
     </div>
+    <details v-if="Object.keys(legacyNotes).length" class="timetable-legacy-notes" open>
+      <summary>空白格旧备注（{{ Object.keys(legacyNotes).length }}）</summary>
+      <ul><li v-for="(text, key) in legacyNotes" :key="key">{{ key.replace('#', ' 第 ') }} 节：{{ text }}</li></ul>
+      <button class="button-secondary" type="button" @click="clearLegacyNotes">清除</button>
+    </details>
     <details v-if="cache" class="timetable-settings">
       <summary>课表设置</summary>
       <div class="timetable-settings-content">
@@ -192,4 +251,17 @@ td { vertical-align: top; }
 .timetable-course details { font-size: 11px; line-height: 1.6; }
 .timetable-course summary { cursor: pointer; color: var(--cloud-blue); }
 .timetable-course details p { margin-top: 5px; }
+.timetable-note, .timetable-note-add { min-height: 0; font-size: 11px; font-weight: 400; line-height: 1.5; text-align: left; }
+.timetable-note { display: block; width: 100%; padding: 5px 7px; border: 1px solid #f0d98a; border-radius: 6px; background: #fff8db; color: #5c4a12; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timetable-note:not(:disabled):hover { background: #fff1bf; }
+.timetable-note-add { justify-self: start; padding: 2px 6px; border: 1px dashed #cbd5e1; background: white; color: var(--muted); }
+.timetable-note-add:not(:disabled):hover { background: var(--cloud-blue-soft); color: var(--cloud-blue); }
+.timetable-note-editor { display: grid; gap: 6px; }
+.timetable-legacy-notes { display: grid; gap: 8px; font-size: 13px; }
+.timetable-legacy-notes > summary { cursor: pointer; color: var(--muted); }
+.timetable-legacy-notes ul { margin: 8px 0; padding-left: 18px; white-space: pre-wrap; }
+.timetable-legacy-notes button { justify-self: start; min-height: 32px; font-size: 12px; }
+.timetable-note-editor textarea { min-height: 64px; padding: 6px 8px; font-size: 12px; }
+.timetable-note-editor button { min-height: 28px; padding: 0 10px; font-size: 12px; }
+.timetable-note-editor .inline-actions { gap: 6px; }
 </style>

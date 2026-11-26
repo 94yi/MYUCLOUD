@@ -1,7 +1,10 @@
 import { fetchBackend, readBackendPayload, responseErrorMessage } from './http.js'
-import { backendUrl } from '../utils/runtime.js'
+import { STATIC_PREVIEW, PREVIEW_MESSAGE, backendUrl } from '../utils/runtime.js'
+import { uploadWithProgress } from './upload.js'
 
 export const TOKEN_KEY = 'mock-ucloud-blade-auth'
+// 只给「复制给 Agent」用：网页本身不续期，agent 的命令行工具拿它换新 token
+export const REFRESH_TOKEN_KEY = 'mock-ucloud-refresh-token'
 export const DEFAULT_LOGIN_URL = '/api/login'
 export const DEFAULT_DEBUG_URL = '/ucloud/ykt-basics/info'
 export const BUSINESS_AUTH = 'Basic c3dvcmQ6c3dvcmRfc2VjcmV0'
@@ -11,6 +14,17 @@ const API_PATHS = {
   userInfo: '/ucloud/ykt-basics/info',
   courses: '/ucloud/ykt-site/site/list/student/current',
   assignments: '/ucloud/ykt-site/work/student/list',
+  surveyTodo: '/ucloud/ykt-activity/survey/page/todo',
+  surveyDetail: '/ucloud/ykt-activity/survey/detail',
+  surveySubmit: '/ucloud/ykt-activity/survey/submit-answer',
+  quizzes: '/ucloud/ykt-site/examination/list-stu',
+  quizInfo: '/ucloud/ykt-site/examination/exam-info-stu',
+  quizEnter: '/ucloud/ykt-site/answersheet/enter-paper',
+  quizSaveAnswer: '/ucloud/ykt-site/answersheet/member-answers',
+  quizUnsaved: '/ucloud/ykt-site/answersheet/query-no-submit',
+  quizSubmit: '/ucloud/ykt-site/answersheet/submit-exam',
+  quizResult: '/ucloud/ykt-site/answersheet/have-read-paper-stu',
+  serverClock: '/ucloud/ykt-site/common/clock',
   assignmentDetail: '/ucloud/ykt-site/work/detail',
   assignmentSubmit: '/ucloud/ykt-site/work/submit',
   assignmentSubmitView: '/ucloud/ykt-site/work/submit-view',
@@ -166,6 +180,166 @@ export async function getAssignments(token, { current = 1, size = 100, siteId = 
   }
 }
 
+// 待填问卷。level 必填：1 课堂级、2 平台级；不带 siteId 时返回本人所有课程的问卷
+export async function getTodoSurveys(token, { userId, level }) {
+  const params = new URLSearchParams({
+    level: String(level),
+    current: '1',
+    size: '9999',
+    userId,
+  })
+  const request = {
+    url: `${API_PATHS.surveyTodo}?${params}`,
+    method: 'GET',
+    headers: businessHeaders(token),
+  }
+  const response = await fetchBackend(request.url, {
+    headers: request.headers,
+  })
+
+  return {
+    request,
+    result: await readResponse(response),
+  }
+}
+
+// 问卷详情，题目在 data.questionPage.records；官方页面每页 5 题，这里一次取完
+export async function getSurveyDetail(token, surveyId) {
+  const params = new URLSearchParams({
+    id: surveyId,
+    current: '1',
+    size: '999',
+  })
+  const request = {
+    url: `${API_PATHS.surveyDetail}?${params}`,
+    method: 'GET',
+    headers: businessHeaders(token),
+  }
+  const response = await fetchBackend(request.url, {
+    headers: request.headers,
+  })
+
+  return {
+    request,
+    result: await readResponse(response),
+  }
+}
+
+// 提交整份问卷的答案，格式见 buildSurveyAnswers；提交后不能修改
+export async function submitSurveyAnswers(token, answers) {
+  const request = {
+    url: API_PATHS.surveySubmit,
+    method: 'POST',
+    headers: businessHeaders(token, { 'Content-Type': 'application/json' }),
+    body: answers,
+  }
+  const response = await fetchBackend(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: JSON.stringify(request.body),
+  })
+
+  return {
+    request,
+    result: await readResponse(response),
+  }
+}
+
+// 测验列表必须带 siteId，只能按课程逐个查；不带 statusSelf 时返回全部，记录里的 statusSelf 区分是否已提交
+export async function getQuizzes(token, siteId) {
+  const params = new URLSearchParams({
+    current: '1',
+    size: '9999',
+    status: '-1',
+    state: '-1',
+    siteId,
+  })
+  const request = {
+    url: `${API_PATHS.quizzes}?${params}`,
+    method: 'GET',
+    headers: businessHeaders(token),
+  }
+  const response = await fetchBackend(request.url, {
+    headers: request.headers,
+  })
+
+  return {
+    request,
+    result: await readResponse(response),
+  }
+}
+
+async function quizCall(token, url, method = 'GET', body) {
+  const request = {
+    url,
+    method,
+    headers: businessHeaders(token, body ? { 'Content-Type': 'application/json' } : {}),
+    ...(body ? { body } : {}),
+  }
+  const response = await fetchBackend(request.url, {
+    method,
+    headers: request.headers,
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  })
+
+  return {
+    request,
+    result: await readResponse(response),
+  }
+}
+
+// 测验概要：时长（分钟）、是否允许重复作答、是否已提交、成绩；不会开始计时
+export function getQuizInfo(token, quizId) {
+  return quizCall(token, `${API_PATHS.quizInfo}?id=${encodeURIComponent(quizId)}`)
+}
+
+// 进入试卷，第一次进入时开始计时（data.startAt）；作答中再次进入不会重新计时，selfAnswer 是已保存的答案。
+// 已提交且允许重复作答的测验，进入即开始新的一次作答。
+export function enterQuizPaper(token, quizId) {
+  return quizCall(token, `${API_PATHS.quizEnter}?examinationId=${encodeURIComponent(quizId)}`, 'POST')
+}
+
+// 每题单独保存，后一次覆盖前一次；参数名 questiontId 在官方接口里就多一个 t
+export function saveQuizAnswer(token, quizId, questionId, values, resourceIds = []) {
+  return quizCall(token, API_PATHS.quizSaveAnswer, 'POST', {
+    examinationId: quizId,
+    answerSheetList: [{ questiontId: questionId, values, resourceIds }],
+  })
+}
+
+// 返回还没有保存过答案的题目 questionId 列表
+export function getQuizUnsaved(token, quizId) {
+  return quizCall(token, `${API_PATHS.quizUnsaved}?examinationId=${encodeURIComponent(quizId)}`)
+}
+
+// auto=true 表示时间到自动交卷
+export function submitQuiz(token, quizId, auto = false) {
+  const params = new URLSearchParams({ examinationId: quizId, auto: String(auto) })
+  return quizCall(token, `${API_PATHS.quizSubmit}?${params}`, 'POST')
+}
+
+// 已提交测验的卷面：总分、每题得分和自己的答案；客观题交卷后立即评分
+export function getQuizResult(token, quizId) {
+  return quizCall(token, `${API_PATHS.quizResult}?examinationId=${encodeURIComponent(quizId)}`)
+}
+
+// 服务器时间（北京时间，data.data），倒计时以它为准
+export function getServerClock(token) {
+  return quizCall(token, API_PATHS.serverClock)
+}
+
+const UCLASS_URL = 'https://ucloud.bupt.edu.cn/uclass'
+
+// 官方作答页地址，和官方首页待办的跳转一致：只在遇到不支持的题型或需要附件时使用
+export function buildActivityUrl(item) {
+  const id = encodeURIComponent(item?.activityId || '')
+  if (!id) return ''
+  if (item.kind === 'survey') return `${UCLASS_URL}/index.html#/student/survey/participateSurvey_fullpage?id=${id}`
+  if (item.kind === 'quiz') return `${UCLASS_URL}/course.html#/answer?id=${id}`
+
+  return ''
+}
+
 export async function getCourseResources(token, { siteId, userId }) {
   const params = new URLSearchParams({
     siteId,
@@ -268,7 +442,8 @@ export async function getAssignmentSubmitView(token, assignmentId) {
   }
 }
 
-export async function uploadBusinessResource(token, { file, userId, bizType = 3 }) {
+export async function uploadBusinessResource(token, { file, userId, bizType = 3, onProgress, signal }) {
+  if (STATIC_PREVIEW) throw new Error(PREVIEW_MESSAGE)
   const formData = new FormData()
   formData.append('file', file)
   formData.append('userId', String(userId))
@@ -291,10 +466,11 @@ export async function uploadBusinessResource(token, { file, userId, bizType = 3 
       bizType: String(bizType),
     },
   }
-  const response = await fetchBackend(request.url, {
-    method: request.method,
+  const response = await uploadWithProgress(request.url, {
     headers: request.headers,
     body: formData,
+    onProgress,
+    signal,
   })
 
   return {
