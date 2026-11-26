@@ -2,14 +2,7 @@
 
 主站：`https://snoval.link/`；报告封面：`https://snoval.link/geport/`。
 
-```powershell
-npm.cmd ci
-npm.cmd ci --prefix geport
-npm.cmd test
-npm.cmd run build:snoval
-npx.cmd wrangler login
-npx.cmd wrangler deploy
-```
+日常发布只需将改动推送或合并到本仓库 `master`。[自动部署](SNOVAL-AUTODEPLOY.md)会测试、构建、发布并核对线上版本。
 
 构建会先生成 Vue 主站，再以 `/geport/` 为资源前缀构建 React 报告工具，合并至 `dist/geport/`。构建脚本将后端设为同源，报告工具入口设为 `/geport/`；调试入口与私有字体不进入该产物。Geport 使用本地编译的 Tailwind。
 
