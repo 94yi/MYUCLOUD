@@ -38,6 +38,7 @@ import QuizPanel from './components/common/QuizPanel.vue'
 import PeerReviewPanel from './components/common/PeerReviewPanel.vue'
 import { hasPeerReview } from './utils/peer-review.js'
 import { loadPeerReviewTasks } from './services/peer-review.js'
+import { loadStudySections } from './utils/study-load.js'
 import AppShell from './components/layout/AppShell.vue'
 import { usePlugins } from './plugin/index.js'
 import {
@@ -78,6 +79,10 @@ const logs = ref([])
 const loggingIn = ref(false)
 const requesting = ref(false)
 const loadingStudy = ref(false)
+const loadingStudyCourses = ref(false)
+const loadingStudyAssignments = ref(false)
+let studyRequest = 0
+let loadingStudyToken = ''
 const loadingCourseId = ref('')
 const loadingCourseAssignments = ref(false)
 const loadingAssignmentId = ref('')
@@ -564,18 +569,19 @@ async function refreshAssignmentsAfterSubmit(assignmentId) {
   }
 }
 
-async function buildAssignmentCourseMap(courseRecords) {
+async function buildAssignmentCourseMap(courseRecords, token, isCurrent) {
   const pairs = await Promise.all(
     courseRecords.map(async (course) => {
       const courseId = getCourseId(course)
       if (!courseId) return []
 
       try {
-        const assignmentCall = await getAssignments(bladeToken.value, {
+        const assignmentCall = await getAssignments(token, {
           current: 1,
           size: 9999,
           siteId: courseId,
         })
+        if (!isCurrent()) return []
         log('study:assignment-course-map:start', assignmentCall.request)
         log('study:assignment-course-map:response', assignmentCall.result)
         checkAuth(assignmentCall.result, '课程作业映射')
@@ -588,7 +594,7 @@ async function buildAssignmentCourseMap(courseRecords) {
           },
         ])
       } catch (error) {
-        logError('study:assignment-course-map:error', error)
+        if (isCurrent()) logError('study:assignment-course-map:error', error)
         return []
       }
     }),
@@ -624,6 +630,7 @@ function normalizeBladeTokenInput(value) {
 }
 
 function saveBladeToken(nextToken, source, nextRefreshToken = '') {
+  if (bladeToken.value && bladeToken.value !== nextToken) clearToken()
   bladeToken.value = nextToken
   localStorage.setItem(TOKEN_KEY, nextToken)
   refreshToken.value = nextRefreshToken
@@ -700,67 +707,126 @@ async function loginWithBladeAuth() {
 
 async function loadStudyData() {
   if (STATIC_PREVIEW) return
-  if (!bladeToken.value) {
+  const token = bladeToken.value
+  if (!token) {
     studyError.value = '需要先登录或粘贴 Blade-Auth'
     return
   }
 
+  if (loadingStudy.value && loadingStudyToken === token) return
+  const request = ++studyRequest
+  const isCurrent = () => request === studyRequest && token === bladeToken.value
+  loadingStudyToken = token
   loadingStudy.value = true
+  loadingStudyCourses.value = true
+  loadingStudyAssignments.value = true
   studyError.value = ''
+  peerTodoRequest++
   resetCourseResources()
   resetCourseAssignments()
   resetAssignmentDetail()
 
+  function failure(error) {
+    if (!isCurrent()) return
+    const message = error?.message || '加载失败'
+    if (!studyError.value.includes(message)) {
+      studyError.value = [studyError.value, message].filter(Boolean).join('；')
+    }
+    logError('study:error', error)
+  }
+
   try {
-    const userCall = await getUserInfo(bladeToken.value)
+    const userCall = await getUserInfo(token)
+    if (!isCurrent()) return
     log('study:user-info:start', userCall.request)
     log('study:user-info:response', userCall.result)
     checkAuth(userCall.result, '用户信息')
-
-    const user = userCall.result.body?.data || null
-    if (!user?.id) {
-      throw new Error('用户信息里没有 id')
-    }
+    const user = userCall.result.body?.data
+    if (!user?.id) throw new Error('用户信息里没有 id')
     userInfo.value = user
 
-    const courseCall = await getStudentCourses(bladeToken.value, user.id)
-    log('study:courses:start', courseCall.request)
-    log('study:courses:response', courseCall.result)
-    checkAuth(courseCall.result, '课程列表')
-    courses.value = courseCall.result.body?.data?.records || []
-    const [assignmentCourseMap, nextActivityTasks] = await Promise.all([
-      buildAssignmentCourseMap(courses.value),
-      loadActivityTasks(user.id, courses.value),
-    ])
-
-    const assignmentCall = await getAssignments(bladeToken.value, {
-      current: 1,
-      size: ASSIGNMENT_FETCH_SIZE,
-    })
-    log('study:assignments:start', assignmentCall.request)
-    log('study:assignments:response', assignmentCall.result)
-    checkAuth(assignmentCall.result, '作业列表')
-    assignments.value = sortAssignments(
-      (assignmentCall.result.body?.data?.records || []).map((record) => {
-        const course = assignmentCourseMap.get(String(record.id || '')) || {}
-
-        return normalizeAssignment({
-          ...record,
-          siteId: course.courseId,
-          siteName: course.courseName,
+    await loadStudySections({
+      courses: async () => {
+        try {
+          const call = await getStudentCourses(token, user.id)
+          if (!isCurrent()) return []
+          log('study:courses:start', call.request)
+          log('study:courses:response', call.result)
+          checkAuth(call.result, '课程列表')
+          const records = call.result.body?.data?.records || []
+          courses.value = records
+          syncViewFromHash()
+          return records
+        } catch (error) {
+          failure(error)
+          throw error
+        } finally {
+          if (isCurrent()) loadingStudyCourses.value = false
+        }
+      },
+      assignments: async () => {
+        try {
+          const call = await getAssignments(token, { current: 1, size: ASSIGNMENT_FETCH_SIZE })
+          if (!isCurrent()) return
+          log('study:assignments:start', call.request)
+          log('study:assignments:response', call.result)
+          checkAuth(call.result, '作业列表')
+          const known = buildKnownAssignmentMap()
+          assignments.value = sortAssignments(
+            (call.result.body?.data?.records || []).map((record) => normalizeAssignmentWithKnownCourse(record, known)),
+          )
+          lastLoadedAt.value = new Date().toLocaleString()
+          syncViewFromHash()
+        } catch (error) {
+          failure(error)
+          throw error
+        } finally {
+          if (isCurrent()) loadingStudyAssignments.value = false
+        }
+      },
+      activities: (records) => {
+        if (!isCurrent()) return
+        return loadActivityTasks(user.id, records, token, isCurrent, (kind, tasks) => {
+          activityTasks.value = [...activityTasks.value.filter((task) => task.kind !== kind), ...tasks]
+          syncViewFromHash()
         })
-      }),
-    )
-    activityTasks.value = nextActivityTasks
-    await refreshPeerReviewTasks()
-
-    lastLoadedAt.value = new Date().toLocaleString()
-    syncViewFromHash()
+      },
+      courseMap: (records) => isCurrent() && assignments.value.some((item) => !item.courseId || !item.courseName)
+        ? buildAssignmentCourseMap(records, token, isCurrent) : new Map(),
+      applyCourseMap: (map) => {
+        if (!isCurrent() || !map.size) return
+        const enrich = (item) => {
+          const course = map.get(getAssignmentId(item))
+          if (!course || (item.courseId && item.courseName)) return item
+          const courseId = item.courseId || course.courseId
+          const courseName = item.courseName || course.courseName
+          if (!item.isMissed) return { ...item, courseId, courseName }
+          const { isMissed, isOverdue, level, status } = normalizeAssignment({ ...item.raw, siteId: courseId, siteName: courseName })
+          return { ...item, courseId, courseName, isMissed, isOverdue, level, status }
+        }
+        assignments.value = sortAssignments(assignments.value.map(enrich))
+        if (selectedAssignment.value) selectedAssignment.value = enrich(selectedAssignment.value)
+        peerReviewTasks.value = peerReviewTasks.value.map((item) => {
+          const course = map.get(item.activityId)
+          return course ? { ...item, courseId: item.courseId || course.courseId, courseName: item.courseName || course.courseName } : item
+        })
+      },
+      reviews: async () => {
+        if (!isCurrent()) return
+        try { await refreshPeerReviewTasks() } catch (error) {
+          if (isCurrent()) peerTodoWarning.value = '互评待办未能更新，请刷新重试。'
+          if (isCurrent()) logError('study:peer-reviews:error', error)
+        }
+      },
+    })
   } catch (error) {
-    studyError.value = error?.message || '加载失败'
-    logError('study:error', error)
+    failure(error)
   } finally {
-    loadingStudy.value = false
+    if (isCurrent()) {
+      loadingStudy.value = false
+      loadingStudyCourses.value = false
+      loadingStudyAssignments.value = false
+    }
   }
 }
 
@@ -770,17 +836,22 @@ async function refreshPeerReviewTasks() {
   const request = ++peerTodoRequest
   const { tasks, errors } = await loadPeerReviewTasks(token, assignments.value, { previous: peerReviewTasks.value })
   if (token !== bladeToken.value || request !== peerTodoRequest) return
-  peerReviewTasks.value = tasks
+  const known = new Map(assignments.value.map((item) => [getAssignmentId(item), item]))
+  peerReviewTasks.value = tasks.map((task) => {
+    const assignment = known.get(task.activityId)
+    return { ...task, courseId: task.courseId || assignment?.courseId, courseName: task.courseName || assignment?.courseName }
+  })
   peerTodoWarning.value = errors.length ? '部分互评待办未能更新，请刷新重试；作业提交状态不代表互评已完成。' : ''
 }
 
 // 问卷和测验各自单独请求，读不到时不影响作业列表
-async function loadActivityTasks(userId, courseRecords) {
+async function loadActivityTasks(userId, courseRecords, token, isCurrent, onLoad) {
   const courseNames = new Map(courseRecords.map((course) => [getCourseId(course), getCourseName(course)]))
 
   const surveyCalls = [1, 2].map(async (level) => {
     try {
-      const surveyCall = await getTodoSurveys(bladeToken.value, { userId, level })
+      const surveyCall = await getTodoSurveys(token, { userId, level })
+      if (!isCurrent()) return []
       log('study:surveys:start', surveyCall.request)
       log('study:surveys:response', surveyCall.result)
       checkAuth(surveyCall.result, '问卷列表')
@@ -789,7 +860,7 @@ async function loadActivityTasks(userId, courseRecords) {
         normalizeSurvey(record, courseNames.get(String(record.siteId))),
       )
     } catch (error) {
-      logError('study:surveys:error', error)
+      if (isCurrent()) logError('study:surveys:error', error)
       return []
     }
   })
@@ -799,7 +870,8 @@ async function loadActivityTasks(userId, courseRecords) {
     if (!courseId) return []
 
     try {
-      const quizCall = await getQuizzes(bladeToken.value, courseId)
+      const quizCall = await getQuizzes(token, courseId)
+      if (!isCurrent()) return []
       log('study:quizzes:start', quizCall.request)
       log('study:quizzes:response', quizCall.result)
       checkAuth(quizCall.result, '测验列表')
@@ -808,15 +880,17 @@ async function loadActivityTasks(userId, courseRecords) {
         normalizeQuiz(record, { courseId, courseName: getCourseName(course) }),
       )
     } catch (error) {
-      logError('study:quizzes:error', error)
+      if (isCurrent()) logError('study:quizzes:error', error)
       return []
     }
   })
 
-  const tasks = (await Promise.all([...surveyCalls, ...quizCalls])).flat()
+  async function publish(kind, requests) {
+    const tasks = (await Promise.all(requests)).flat()
+    if (isCurrent()) onLoad(kind, tasks.filter((task) => !task.isOverdue))
+  }
 
-  // 截止后还没交的问卷和测验没法再作答，不再列出；已交的测验保留，可以看卷面
-  return tasks.filter((task) => !task.isOverdue)
+  await Promise.all([publish('survey', surveyCalls), publish('quiz', quizCalls)])
 }
 
 async function loadCourseResources(course) {
@@ -1414,6 +1488,10 @@ async function requestWithAuth() {
 }
 
 function clearToken() {
+  studyRequest++
+  loadingStudy.value = false
+  loadingStudyCourses.value = false
+  loadingStudyAssignments.value = false
   bladeToken.value = ''
   userInfo.value = null
   courses.value = []
@@ -1566,7 +1644,7 @@ onUnmounted(() => {
       <div class="study-columns">
         <CourseGrid
           :courses="courses"
-          :loading="loadingStudy"
+          :loading="loadingStudyCourses"
           :loading-course-id="loadingCourseId"
           :selected-course-id="selectedCourseId"
           @select="openCourse"
@@ -1579,7 +1657,8 @@ onUnmounted(() => {
           :assignments="visibleAssignments"
           @batch-review="openPeerReviewTodo($event, true)"
           :last-loaded-at="lastLoadedAt"
-          :loading="loadingStudy"
+          :loading="loadingStudyAssignments && !visibleAssignments.length"
+          :syncing="loadingStudy && !loadingStudyAssignments"
           :loading-assignment-id="loadingAssignmentId"
           :selected-assignment-id="selectedAssignmentId"
           @select="openTodoItem"

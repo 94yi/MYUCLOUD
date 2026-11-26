@@ -36,6 +36,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  syncing: {
+    type: Boolean,
+    default: false,
+  },
   error: {
     type: String,
     default: '',
@@ -74,7 +78,8 @@ const assignmentGroups = computed(() => groupAssignments(props.assignments))
     <div class="section-header">
       <div>
         <h2>{{ title }}</h2>
-        <p>{{ subtitle || (lastLoadedAt ? `更新于 ${lastLoadedAt}` : '等待加载') }}</p>
+        <p v-if="syncing" role="status">正在同步其他待办…</p>
+        <p v-else>{{ subtitle || (lastLoadedAt ? `更新于 ${lastLoadedAt}` : '等待加载') }}</p>
       </div>
       <div v-if="showControls" class="deadline-controls">
         <label class="size-control">
@@ -100,6 +105,7 @@ const assignmentGroups = computed(() => groupAssignments(props.assignments))
 
     <section v-if="error" class="notice error">{{ error }}</section>
     <div v-else-if="loading" class="list-placeholder" role="status">{{ loadingText }}</div>
+    <div v-else-if="!assignments.length && syncing" class="list-placeholder">暂未发现待办，仍在同步</div>
     <div v-else-if="!assignments.length" class="list-placeholder">
       <strong>{{ emptyText }}</strong>
       <p>已加载的作业会按截止时间排列。</p>
