@@ -1,8 +1,8 @@
 name: Snoval production
 
 on:
-  schedule:
-    - cron: '17,47 * * * *'
+  push:
+    branches: [master]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -22,60 +22,12 @@ jobs:
     if: github.repository == '94yi/MYUCLOUD' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      needed: ${{ steps.source.outputs.needed }}
-      overlay: ${{ steps.source.outputs.overlay }}
-      upstream: ${{ steps.source.outputs.upstream }}
-      revision: ${{ steps.source.outputs.revision }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: snoval-production
-          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Check upstream and merge into the Snoval base
-        id: source
-        env:
-          DRY_RUN: ${{ inputs.dry_run }}
-          READY: ${{ vars.SNOVAL_AUTODEPLOY }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == schedule && "$READY" != true ]]; then
-            echo 'Automatic publishing is waiting for Cloudflare setup.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          git fetch --no-tags https://github.com/AuceptinFang/MYUCLOUD.git refs/heads/master
-          upstream=$(git rev-parse FETCH_HEAD)
-          overlay=$(git rev-parse HEAD)
-          if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
-            status=$(curl --silent --show-error --retry 2 --max-time 15 \
-              --output "$RUNNER_TEMP/snoval-live.json" --write-out '%{http_code}' \
-              "https://snoval.link/snoval-release.json?check=$GITHUB_RUN_ID")
-            # The first automated release adds this file; the current Worker returns 404.
-            if [[ "$status" != 200 && "$status" != 404 ]]; then
-              echo "::error::Could not determine the live release (HTTP $status)."
-              exit 1
-            fi
-            if [[ "$status" == 200 ]] && jq -e --arg upstream "$upstream" --arg overlay "$overlay" \
-              '.upstream == $upstream and .overlay == $overlay' "$RUNNER_TEMP/snoval-live.json" >/dev/null; then
-              echo "Snoval already serves upstream $upstream." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          elif [[ "$DRY_RUN" != true && "$READY" != true ]]; then
-            echo '::error::Configure Cloudflare and set SNOVAL_AUTODEPLOY=true, or use dry_run.'
-            exit 1
-          fi
-          if ! git -c user.name='Snoval release' -c user.email='actions@users.noreply.github.com' \
-            merge --no-edit "$upstream"; then
-            echo '::error::Upstream could not be merged. Resolve it on snoval-production; the live site was not changed.'
-            exit 1
-          fi
-          revision=$(git rev-parse HEAD)
-          printf 'needed=true\noverlay=%s\nupstream=%s\nrevision=%s\n' \
-            "$overlay" "$upstream" "$revision" >> "$GITHUB_OUTPUT"
-          printf 'Upstream: %s · Snoval base: %s\n' "$upstream" "$overlay" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        if: steps.source.outputs.needed == 'true'
         with:
           node-version: '22'
           cache: npm
@@ -83,22 +35,15 @@ jobs:
             package-lock.json
             geport/package-lock.json
       - name: Test and build both pages
-        if: steps.source.outputs.needed == 'true'
-        env:
-          UPSTREAM: ${{ steps.source.outputs.upstream }}
-          OVERLAY: ${{ steps.source.outputs.overlay }}
-          REVISION: ${{ steps.source.outputs.revision }}
         run: |
           npm ci
           npm ci --prefix geport
           npm test
-          GITHUB_SHA="$REVISION" npm run build:snoval
+          npm run build:snoval
           test -s dist/index.html
           test -s dist/geport/index.html
-          jq -n --arg upstream "$UPSTREAM" --arg overlay "$OVERLAY" --arg revision "$REVISION" \
-            '{upstream: $upstream, overlay: $overlay, revision: $revision}' > dist/snoval-release.json
+          jq -n --arg revision "$GITHUB_SHA" '{branch:"master",revision:$revision}' > dist/snoval-release.json
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        if: steps.source.outputs.needed == 'true'
         with:
           name: snoval-dist
           path: dist/
@@ -106,7 +51,7 @@ jobs:
           retention-days: 7
 
   verify-cloudflare:
-    if: needs.build.outputs.needed == 'true'
+    if: vars.SNOVAL_AUTODEPLOY == 'true' || inputs.dry_run == true
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -122,21 +67,16 @@ jobs:
         run: python3 .github/scripts/verify-snoval-cloudflare.py
 
   deploy:
-    if: needs.build.outputs.needed == 'true' && inputs.dry_run != true
+    if: vars.SNOVAL_AUTODEPLOY == 'true' && inputs.dry_run != true
     needs: [build, verify-cloudflare]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: snoval-production
     steps:
-      # Use the trusted Snoval Worker/config and tools, not the merged upstream checkout.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: snoval-production
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Verify the Snoval base has not moved
-        env:
-          OVERLAY: ${{ needs.build.outputs.overlay }}
-        run: test "$(git rev-parse HEAD)" = "$OVERLAY"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
@@ -145,7 +85,16 @@ jobs:
         with:
           name: snoval-dist
           path: dist
+      - name: Check this is still the master tip
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha)
+          if [[ "$tip" == "$GITHUB_SHA" ]]; then echo 'current=true' >> "$GITHUB_OUTPUT"; else echo 'Superseded by a newer master commit; skipping deployment.' >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Publish the tested build
+        if: steps.tip.outputs.current == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -160,8 +109,9 @@ jobs:
           ./node_modules/.bin/wrangler versions upload --keep-vars --tag "$tag"
           ./node_modules/.bin/wrangler versions deploy --version-tag "$tag@100" --yes
       - name: Verify live release
+        if: steps.tip.outputs.current == 'true'
         env:
-          REVISION: ${{ needs.build.outputs.revision }}
+          REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4; do
