@@ -1,0 +1,17 @@
+[Unit]
+Description=Snoval quiz and peer review automation
+After=network-online.target
+
+[Service]
+Type=simple
+StateDirectory=snoval-automation
+WorkingDirectory=%S/snoval-automation
+ExecStart=/usr/bin/node %h/MYUCLOUD/automation/worker.mjs
+EnvironmentFile=-%h/.config/snoval-automation/env
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
